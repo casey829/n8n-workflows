@@ -1,0 +1,785 @@
+{
+  "name": "Daily Journal - Adaptive Morning & Night Prompts",
+  "nodes": [
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "276ee7fc-7c11-4ab8-8c31-83493452fe91",
+              "name": "JOURNAL_DB_ID",
+              "value": "YOUR_JOURNAL_DB_ID",
+              "type": "string"
+            },
+            {
+              "id": "71a67bc9-abb6-4032-875b-43747313e6d5",
+              "name": "GOALS_DB_ID",
+              "value": "YOUR_GOALS_DB_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e4be576d-b5b6-46eb-8c71-6c9141978f0f",
+      "name": "Global Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -224,
+        96
+      ],
+      "notesInFlow": true
+    },
+    {
+      "parameters": {},
+      "id": "1d525403-7458-4384-a8af-ed604ffbcf53",
+      "name": "Merge Morning Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Extract text from Gemini response\nlet text = '';\ntry {\n  text = input.candidates?.[0]?.content?.parts?.[0]?.text || '';\n} catch (e) {\n  return [{\n    json: {\n      error: 'Failed to get Gemini response',\n      raw: JSON.stringify(input).substring(0, 500),\n    },\n  }];\n}\n\n// Clean and parse JSON\ntry {\n  text = text\n    .replace(/```json\\n?/g, '')\n    .replace(/```\\n?/g, '')\n    .trim();\n  const parsed = JSON.parse(text);\n\n  // Validate structure: must have 6 prompts\n  if (\n    !parsed.prompts ||\n    !Array.isArray(parsed.prompts) ||\n    parsed.prompts.length !== 6\n  ) {\n    throw new Error('Invalid prompts structure (need 6 prompts)');\n  }\n\n  return [{\n    json: {\n      ...parsed,\n      type: 'morning',\n      success: true,\n    },\n  }];\n} catch (e) {\n  // Fallback prompts using the 6-section master framework\n  return [{\n    json: {\n      type: 'morning',\n      success: false,\n      theme: 'Master Reset',\n      trend_insight: 'AI parsing failed - using default 6-section master prompts',\n      prompts: [\n        {\n          category: 'foundation',\n          prompt: 'What is my one Definite Chief Aim today, and where do I feel genuine burning desire versus just a weak wish?',\n          why: 'Return to a single clear aim and desire',\n        },\n        {\n          category: 'execution',\n          prompt: 'Where am I secretly blaming others today for something that is 100% my responsibility, and what 20% of work will drive 80% of my results?',\n          why: 'Shift from blame to ownership and essentialism',\n        },\n        {\n          category: 'system',\n          prompt: 'What specific cue, routine, and reward am I reinforcing today, and what one sentence of auto-suggestion will I repeat to my subconscious?',\n          why: 'Lock in one clear habit loop and inner script',\n        },\n        {\n          category: 'edge',\n          prompt: 'What uncomfortable “No” or honest conversation am I avoiding today, and how can I use tactical empathy to listen for what isn’t being said?',\n          why: 'Lean into rejection/discomfort for growth',\n        },\n        {\n          category: 'evolution',\n          prompt: 'Looking at my current obstacles, where is antifragility being built and where am I just getting tired, and what specialized knowledge or Master Mind support do I actually need?',\n          why: 'Reframe setbacks and identify missing knowledge',\n        },\n        {\n          category: 'output',\n          prompt: 'Am I generating the energy required to lead today, and what one bold move—if I actually did it—would make most other tasks easier or irrelevant?',\n          why: 'Drive toward bold, high-leverage action',\n        },\n      ],\n      affirmation:\n        'I move with radical ownership, focused desire, and bold energy toward my chief aim today.',\n    },\n  }];\n}\n"
+      },
+      "id": "16b76508-534e-4df4-89b6-853d2e01c2fa",
+      "name": "Parse & Validate Morning",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{\nJSON.stringify({\n  parent: {\n    database_id: $('Global Configuration').first().json.JOURNAL_DB_ID\n  },\n  properties: {\n    Name: {\n      title: [{ text: { content: \"🌅 Morning Journal - \" + $now.toFormat(\"EEE, MMM d\") } }]\n    },\n    Date: {\n      date: { start: $now.toFormat(\"yyyy-MM-dd\") }\n    },\n    Type: {\n      select: { name: \"Morning\" }\n    },\n    Theme: {\n      rich_text: [{ text: { content: $json.theme || \"\" } }]\n    },\n    Status: {\n      select: { name: \"Pending\" }\n    }\n  },\n  children: [\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🧠 Today's Insight\" } }] }\n    },\n    {\n      object: \"block\", type: \"callout\",\n      callout: { icon: { emoji: \"💡\" }, rich_text: [{ type: \"text\", text: { content: $json.trend_insight || \"\" } }] }\n    },\n    { object: \"block\", type: \"divider\", divider: {} },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🔥 1. The Foundation\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[0] ? $json.prompts[0].prompt : \"What is your one Definite Chief Aim today?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🎯 2. The Execution\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[1] ? $json.prompts[1].prompt : \"What critical task are you fully owning and scheduling first today?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🔁 3. The System\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[2] ? $json.prompts[2].prompt : \"What habit loop will you reinforce today (cue, routine, reward)?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"⚔️ 4. The Edge\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[3] ? $json.prompts[3].prompt : \"What difficult No or honest boundary will you hold today?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🧬 5. The Evolution\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[4] ? $json.prompts[4].prompt : \"What setback or challenge is building your strength right now?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🚀 6. The Output\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[5] ? $json.prompts[5].prompt : \"What one bold action will generate the most momentum today?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    { object: \"block\", type: \"divider\", divider: {} },\n\n    {\n      object: \"block\", type: \"callout\",\n      callout: {\n        icon: { emoji: \"✨\" },\n        rich_text: [{ type: \"text\", text: { content: \"Today's Affirmation: \" + ($json.affirmation || \"I move with radical ownership, focused desire, and bold energy toward my chief aim today.\") }, annotations: { bold: true } }]\n      }\n    }\n  ]\n})\n}}\n",
+        "options": {}
+      },
+      "id": "ff29d97f-6628-4bc8-979e-8435a9ea401c",
+      "name": "Create Morning Journal Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nlet text = '';\n\ntry {\n  text = input.candidates[0].content.parts[0].text || '';\n} catch (e) {\n  return [{ json: { error: 'Failed to get Gemini response' } }];\n}\n\ntry {\n  text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const parsed = JSON.parse(text);\n\n  if (!parsed.prompts || !Array.isArray(parsed.prompts) || parsed.prompts.length !== 4) {\n    throw new Error('Need exactly 4 prompts');\n  }\n\n  return [{ json: { theme: parsed.theme, trend_insight: parsed.trend_insight, prompts: parsed.prompts, sleep_intention: parsed.sleep_intention, type: 'night', success: true } }];\n\n} catch (e) {\n  return [{ json: {\n    type: 'night',\n    success: false,\n    theme: 'Gentle Close',\n    trend_insight: 'Using default evening prompts to help you reflect, feel, and let go.',\n    prompts: [\n      { category: 'recap', prompt: 'Walk through your day from morning to now. What moments stand out most, and why?', why: 'Default' },\n      { category: 'follow_through', prompt: 'Thinking about what you intended this morning, where did your actions match that and where did they drift?', why: 'Default' },\n      { category: 'emotions', prompt: 'How are you feeling right now—emotionally and in your body? Name it simply and allow it to be there without judgment.', why: 'Default' },\n      { category: 'release', prompt: 'What worries, unfinished tasks, or lingering thoughts can you write down here so you do not carry them into sleep?', why: 'Default' }\n    ],\n    sleep_intention: 'Tonight I release what I cannot control and give my mind and body permission to rest.'\n  }}];\n}\n"
+      },
+      "id": "a47e299c-53bd-4b94-bcdb-4709da3deb90",
+      "name": "Parse & Validate Night",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{\nJSON.stringify({\n  parent: {\n    database_id: $('Global Configuration (Night)').first().json.JOURNAL_DB_ID\n  },\n  properties: {\n    Name: {\n      title: [{ text: { content: \"🌙 Night Journal - \" + $now.toFormat(\"EEE, MMM d\") } }]\n    },\n    Date: {\n      date: { start: $now.toFormat(\"yyyy-MM-dd\") }\n    },\n    Type: {\n      select: { name: \"Night\" }\n    },\n    Theme: {\n      rich_text: [{ text: { content: $json.theme || \"\" } }]\n    },\n    Status: {\n      select: { name: \"Pending\" }\n    }\n  },\n  children: [\n    {\n      object: \"block\", type: \"callout\",\n      callout: { icon: { emoji: \"🔍\" }, rich_text: [{ type: \"text\", text: { content: $json.trend_insight || \"\" } }] }\n    },\n    { object: \"block\", type: \"divider\", divider: {} },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"📋 1. Day Recap\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[0] ? $json.prompts[0].prompt : \"Walk through your day from morning to now. What stands out most?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🎯 2. Morning Follow-Through\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[1] ? $json.prompts[1].prompt : \"Thinking about what you hoped for this morning, where did your actions match and where did they drift?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"💭 3. Emotions & Energy\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[2] ? $json.prompts[2].prompt : \"How are you feeling right now—emotionally and physically? Name it without judgment.\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    {\n      object: \"block\", type: \"heading_2\",\n      heading_2: { rich_text: [{ type: \"text\", text: { content: \"🕊️ 4. Release & Reset\" } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: $json.prompts[3] ? $json.prompts[3].prompt : \"What can you safely put down for tonight, knowing you can pick it up again tomorrow?\" }, annotations: { italic: true } }] }\n    },\n    {\n      object: \"block\", type: \"paragraph\",\n      paragraph: { rich_text: [{ type: \"text\", text: { content: \"Your answer: \" } }] }\n    },\n\n    { object: \"block\", type: \"divider\", divider: {} },\n\n    {\n      object: \"block\", type: \"callout\",\n      callout: {\n        icon: { emoji: \"🌊\" },\n        rich_text: [{ type: \"text\", text: { content: \"Sleep Intention: \" + ($json.sleep_intention || \"Tonight I release what I cannot control and give my mind and body permission to rest.\") }, annotations: { bold: true } }]\n      }\n    }\n  ]\n})\n}}\n",
+        "options": {}
+      },
+      "id": "196c46ce-862e-4519-a084-2a8f1f2c6983",
+      "name": "Create Night Journal Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        416
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('Global Configuration').first().json.JOURNAL_DB_ID }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sorts\": [{\"property\": \"Date\", \"direction\": \"descending\"}],\n  \"page_size\": 14,\n  \"filter\": {\n    \"property\": \"Type\",\n    \"select\": {\n      \"equals\": \"Morning\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "acbba2aa-4d12-4d58-9f91-211c24d3a68c",
+      "name": "Get Past 14 Morning Journals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('Global Configuration').first().json.GOALS_DB_ID }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"page_size\": 100\n}",
+        "options": {}
+      },
+      "id": "b978f5d5-8013-43ef-a5c2-be59e36860c3",
+      "name": "Get Goals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        192
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge past journals and goals into a clean context object\nconst items = $input.all();\nconst journals = items[0]?.json?.results || [];\nconst goals = items.length > 1 ? (items[1]?.json?.results || []) : [];\n\n// Extract readable journal data\nconst journalSummary = journals.slice(0, 14).map(j => {\n  const props = j.properties || {};\n  return {\n    date: props.Date?.date?.start || 'unknown',\n    theme: props.Theme?.rich_text?.[0]?.text?.content || '',\n    responses: props.Responses?.rich_text?.[0]?.text?.content || props.Content?.rich_text?.[0]?.text?.content || '',\n    mood: props.Mood?.select?.name || props.Mood?.number || '',\n    status: props.Status?.select?.name || ''\n  };\n}).filter(j => j.date !== 'unknown');\n\n// Extract goals\nconst goalSummary = goals.map(g => {\n  const props = g.properties || {};\n  return {\ngoal: props.Title?.title?.[0]?.text?.content || '',\ncategory: props.Type?.select?.name || '',\nprogress: props['Progress %']?.formula?.number || 0,\nstatus: props.Type?.select?.name || ''\n  };\n});\n\nreturn [{\n  json: {\n    journals: journalSummary,\n    goals: goalSummary,\n    today: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),\n    dayOfWeek: new Date().toLocaleDateString('en-US', { weekday: 'long' })\n  }\n}];"
+      },
+      "id": "5c80a9c9-a83d-4075-a10c-3cdb95dc30aa",
+      "name": "Prepare Morning Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ \nJSON.stringify({\n  contents: [\n    {\n      parts: [\n        {\n          text: `You are an elite psychology and neuropsychology-informed morning journal coach using this MASTER 6-SECTION FRAMEWORK. Create PERSONALIZED, ADAPTIVE prompts that evolve based on past entries and goals, and reduce repetition while staying true to the client’s language.\n\nToday: ${$json.today}\n\nPast 14 morning journal entries:\n${JSON.stringify($json.journals)}\n\n2026 Goals:\n${JSON.stringify($json.goals)}\n\nMASTER SECTIONS (base questions):\n\n1. The Foundation: Burning Desire and Purpose\n\"What is my one Definite Chief Aim today? Do I have a burning desire to achieve it, or is it just a wish?\"\n\n2. The Execution: Ownership and Essentialism\n\"What am I blaming on others that is 100% my responsibility? What is the 20% of my work driving 80% of my results—and have I scheduled it first?\"\n\n3. The System: Habits and Auto-suggestion\n\"What specific cue, routine, and reward am I building today? Am I using positive auto-suggestion to influence my subconscious, or am I letting fear dictate my inner dialogue?\"\n\n4. The Edge: Rejection and Negotiation\n\"What 'No' am I avoiding today to protect my ego? Am I using tactical empathy to hear what my client isn't saying, or am I just waiting for my turn to speak?\"\n\n5. The Evolution: Antifragility and Specialized Knowledge\n\"Is this setback making me stronger or just tired? Do I have the specialized knowledge needed for this business goal, or do I need to tap into my Master Mind group?\"\n\n6. The Output: High Performance\n\"Am I generating the energy required to lead, or am I waiting for it to arrive? What is the one bold move I’m avoiding that would make everything else easier?\"\n\nANALYZE past 14 entries and goals for:\n1. Recurring negative thought patterns (e.g. blame, fear, procrastination)\n2. Strengths being underused\n3. Goals that are consistently ignored\n4. Emotional trends (is mood improving, stable, or declining?)\n5. Themes the client has already explored heavily in the last 7 days (avoid repeating those angles)\n\nADAPT EACH OF THE 6 SECTIONS BY:\n- Keeping the core meaning of the master question,\n- Adjusting wording, focus, or specificity based on patterns,\n- Rotating angles so that questions do not feel the same day to day.\n\nOUTPUT EXACTLY 6 PROMPTS, ONE PER SECTION:\n1. FOUNDATION\n2. EXECUTION\n3. SYSTEM\n4. EDGE\n5. EVOLUTION\n6. OUTPUT\n\nEach prompt must:\n- Be a single, clear question,\n- Reference specific patterns or neglected goals where helpful,\n- Avoid repeating the same phrasing used in the last 7 entries.\n\nRETURN ONLY valid JSON with NO markdown formatting, NO backticks:\n\n{\n  \"theme\": \"2-3 word theme for today based on analysis\",\n  \"trend_insight\": \"One concise sentence about a pattern noticed in past entries\",\n  \"prompts\": [\n    { \"category\": \"foundation\", \"prompt\": \"Full question for The Foundation\", \"why\": \"Why this angle was chosen based on the data\" },\n    { \"category\": \"execution\", \"prompt\": \"Full question for The Execution\", \"why\": \"...\" },\n    { \"category\": \"system\", \"prompt\": \"Full question for The System\", \"why\": \"...\" },\n    { \"category\": \"edge\", \"prompt\": \"Full question for The Edge\", \"why\": \"...\" },\n    { \"category\": \"evolution\", \"prompt\": \"Full question for The Evolution\", \"why\": \"...\" },\n    { \"category\": \"output\", \"prompt\": \"Full question for The Output\", \"why\": \"...\" }\n  ],\n  \"affirmation\": \"A personalized affirmation based on current challenges, emotional trends, and neglected goals\"\n}`\n        }\n      ]\n    }\n  ],\n  generationConfig: {\n    temperature: 0.8,\n    maxOutputTokens: 8192,\n    responseMimeType: \"application/json\"\n  }\n})\n}}\n",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "37f55f7b-7a0b-44c7-9497-0e360cb18547",
+      "name": "AI Generate Morning Prompts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        96
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Gemini API key"
+        },
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Gemini API key (query)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('Global Configuration (Night)').first().json.JOURNAL_DB_ID }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sorts\": [{\"property\": \"Date\", \"direction\": \"descending\"}],\n  \"page_size\": 14,\n  \"filter\": {\n    \"property\": \"Type\",\n    \"select\": {\n      \"equals\": \"Night\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "677133bb-0a78-42ce-9be8-aa70d1e61231",
+      "name": "Get Past 14 Night Journals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        512
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputs = $input.all();\n\nconst nightResults = inputs[0] && inputs[0].json && inputs[0].json.results ? inputs[0].json.results : [];\nconst morningResults = inputs[1] && inputs[1].json && inputs[1].json.results ? inputs[1].json.results : [];\nconst morningEntry = morningResults.length > 0 ? morningResults[0] : null;\n\nconst journals = nightResults.slice(0, 14).map(function(j) {\n  const props = j.properties || {};\n  return {\n    date: props.Date && props.Date.date ? props.Date.date.start : 'unknown',\n    theme: props.Theme && props.Theme.rich_text && props.Theme.rich_text[0] ? props.Theme.rich_text[0].text.content : '',\n    responses: (props.Responses && props.Responses.rich_text && props.Responses.rich_text[0] ? props.Responses.rich_text[0].text.content : '') || (props.Content && props.Content.rich_text && props.Content.rich_text[0] ? props.Content.rich_text[0].text.content : ''),\n    mood: (props.Mood && props.Mood.select ? props.Mood.select.name : '') || (props.Mood && props.Mood.number ? props.Mood.number : '')\n  };\n}).filter(function(j) { return j.date !== 'unknown'; });\n\nlet todayMorning = null;\nif (morningEntry) {\n  const props = morningEntry.properties || {};\n  todayMorning = {\n    date: props.Date && props.Date.date ? props.Date.date.start : '',\n    theme: props.Theme && props.Theme.rich_text && props.Theme.rich_text[0] ? props.Theme.rich_text[0].text.content : '',\n    responses: (props.Responses && props.Responses.rich_text && props.Responses.rich_text[0] ? props.Responses.rich_text[0].text.content : '') || (props.Content && props.Content.rich_text && props.Content.rich_text[0] ? props.Content.rich_text[0].text.content : '')\n  };\n}\n\nreturn [{\n  json: {\n    journals: journals,\n    todayMorning: todayMorning,\n    today: new Date().toLocaleDateString('en-US', {\n      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'\n    })\n  }\n}];\n"
+      },
+      "id": "68957c8b-e80a-47c2-86f2-bfb421589554",
+      "name": "Prepare Night Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.geminiBody }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "47548421-a9b8-41ac-abe2-75d5a4a6f49b",
+      "name": "AI Generate Night Prompts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        512
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Gemini API key"
+        },
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Gemini API key (query)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 35 5 * * *"
+            }
+          ]
+        }
+      },
+      "id": "99791968-20b1-4585-a31d-d5206f71c6cb",
+      "name": "Morning Trigger (5:35 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 19 * * *"
+            }
+          ]
+        }
+      },
+      "id": "3987b330-74e6-42c1-8e7f-83ffee4ac37d",
+      "name": "Night Trigger (7:30 PM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "276ee7fc-7c11-4ab8-8c31-83493452fe91",
+              "name": "JOURNAL_DB_ID",
+              "value": "YOUR_JOURNAL_DB_ID",
+              "type": "string"
+            },
+            {
+              "id": "71a67bc9-abb6-4032-875b-43747313e6d5",
+              "name": "GOALS_DB_ID",
+              "value": "YOUR_GOALS_DB_ID",
+              "type": "string"
+            },
+            {
+              "id": "86f2f562-7ed3-47c7-a933-01b9df6028b7",
+              "name": "",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "62707e50-a948-4587-9956-dd6691450fc5",
+      "name": "Global Configuration (Night)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -224,
+        512
+      ],
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_ALERT_ENDPOINT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"text\": \"Fallback triggered \\u2014 Daily Journal\\nGemini failed to generate prompts. Static fallback set was used; the journal entry was still created.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1344,
+        192
+      ],
+      "id": "7a85adb1-0012-4d87-b84f-9a048e6c6cfe",
+      "name": "Alert: Morning Fallback Fired"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a0e8976d-126f-46c7-9e48-b8fd2c1a57a7",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        192
+      ],
+      "id": "36fe4d84-51ef-4345-8928-bf5b096f38ad",
+      "name": "Check Morning Fallback"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a0e8976d-126f-46c7-9e48-b8fd2c1a57a7",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        608
+      ],
+      "id": "95bbed91-7748-4505-af69-7945fe4a0245",
+      "name": "Check Night Fallback"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_ALERT_ENDPOINT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"text\": \"Fallback triggered \\u2014 Daily Journal\\nGemini failed to generate prompts. Static fallback set was used; the journal entry was still created.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1568,
+        608
+      ],
+      "id": "94a6d165-83c0-4697-a0e1-15f0142b08f5",
+      "name": "Alert: Night Fallback Fired"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('Global Configuration (Night)').first().json.JOURNAL_DB_ID }}/query\n",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{\nJSON.stringify({\n  filter: {\n    and: [\n      { property: \"Type\", select: { equals: \"Morning\" } },\n      { property: \"Date\", date: { equals: $now.toFormat(\"yyyy-MM-dd\") } }\n    ]\n  },\n  sorts: [{ property: \"Date\", direction: \"descending\" }],\n  page_size: 1\n})\n}}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        512
+      ],
+      "id": "f0750db8-b024-41f5-b0af-203b6f66f3e5",
+      "name": "Get Today's Morning Entry",
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst prompt = `You are a psychology-informed evening journal coach. Create ADAPTIVE night prompts that help the client reflect on how the day went relative to their morning intentions, process emotions with self-compassion, and offload worries to improve sleep.\n\nToday: ${data.today}\n\nToday's morning entry (may be null):\n${JSON.stringify(data.todayMorning || {})}\n\nPast 14 night journals:\n${JSON.stringify(data.journals)}\n\nFRAMEWORKS:\n- Cognitive Processing: structured reflection\n- Self-Compassion (Kristin Neff): kind, non-judgmental awareness\n- Sleep Hygiene & Cognitive Offloading: write it down, let it go\n- Growth Mindset: extract one key learning, not self-criticism\n\nANALYZE:\n1. From today's morning entry: What chief aim or bold move did they set?\n2. From past night entries: recurring stressors, emotional patterns, what leads to better next-day energy\n3. Harsh self-criticism patterns vs balanced reflection\n\nGENERATE EXACTLY 4 NIGHT PROMPTS:\n1. RECAP: Gentle structured recap of what actually happened today\n2. FOLLOW_THROUGH: Reflect on how reality matched morning intentions (if morning entry exists), otherwise a simple integrity-of-actions check\n3. EMOTIONS: Name and validate how they feel right now with self-compassion\n4. RELEASE: Offload worries, unfinished tasks, tension before sleep. Set a light intention for tomorrow\n\nTONE: Warm, non-judgmental, concise. No jargon.\n\nRETURN ONLY valid JSON, NO markdown, NO backticks:\n{\n  \"theme\": \"2-3 word evening theme\",\n  \"trend_insight\": \"One sentence pattern from recent entries\",\n  \"prompts\": [\n    { \"category\": \"recap\", \"prompt\": \"full question\", \"why\": \"reason\" },\n    { \"category\": \"follow_through\", \"prompt\": \"full question\", \"why\": \"reason\" },\n    { \"category\": \"emotions\", \"prompt\": \"full question\", \"why\": \"reason\" },\n    { \"category\": \"release\", \"prompt\": \"full question\", \"why\": \"reason\" }\n  ],\n  \"sleep_intention\": \"short calming mantra tailored to their current patterns\"\n}`;\n\nconst body = JSON.stringify({\n  contents: [\n    {\n      parts: [\n        { text: prompt }\n      ]\n    }\n  ],\n  generationConfig: {\n    temperature: 0.8,\n    maxOutputTokens: 8192,\n    responseMimeType: \"application/json\"\n  }\n});\n\nreturn [{ json: { geminiBody: body } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        512
+      ],
+      "id": "5acc2527-6203-4170-aa1d-c96de8e520dd",
+      "name": "Build Night Gemini Body"
+    }
+  ],
+  "connections": {
+    "Global Configuration": {
+      "main": [
+        [
+          {
+            "node": "Get Past 14 Morning Journals",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Goals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Morning Data": {
+      "main": [
+        [
+          {
+            "node": "Prepare Morning Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate Morning": {
+      "main": [
+        [
+          {
+            "node": "Create Morning Journal Page",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Morning Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate Night": {
+      "main": [
+        [
+          {
+            "node": "Create Night Journal Page",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Night Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Past 14 Morning Journals": {
+      "main": [
+        [
+          {
+            "node": "Merge Morning Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Goals": {
+      "main": [
+        [
+          {
+            "node": "Merge Morning Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Morning Context": {
+      "main": [
+        [
+          {
+            "node": "AI Generate Morning Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Generate Morning Prompts": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate Morning",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Past 14 Night Journals": {
+      "main": [
+        [
+          {
+            "node": "Prepare Night Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Night Context": {
+      "main": [
+        [
+          {
+            "node": "Build Night Gemini Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Generate Night Prompts": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate Night",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Morning Trigger (5:35 AM)": {
+      "main": [
+        [
+          {
+            "node": "Global Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Night Trigger (7:30 PM)": {
+      "main": [
+        [
+          {
+            "node": "Global Configuration (Night)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Global Configuration (Night)": {
+      "main": [
+        [
+          {
+            "node": "Get Today's Morning Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Morning Fallback": {
+      "main": [
+        [
+          {
+            "node": "Alert: Morning Fallback Fired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Night Fallback": {
+      "main": [
+        [
+          {
+            "node": "Alert: Night Fallback Fired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today's Morning Entry": {
+      "main": [
+        [
+          {
+            "node": "Get Past 14 Night Journals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Night Gemini Body": {
+      "main": [
+        [
+          {
+            "node": "AI Generate Night Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/Chicago",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

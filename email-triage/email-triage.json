@@ -1,0 +1,609 @@
+{
+  "name": "Email Triage - AI Routing to Notion & Calendar",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "id": "40e9e530-68b1-418b-b6c8-7a36a332ee29",
+      "name": "Check Gmail",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        208
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sender",
+              "name": "sender",
+              "value": "={{ $json.from.value[0].address }}",
+              "type": "string"
+            },
+            {
+              "id": "senderName",
+              "name": "senderName",
+              "value": "={{ $json.from.value[0].name }}",
+              "type": "string"
+            },
+            {
+              "id": "subject",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "value": "={{ $json.text || $json.snippet }}",
+              "type": "string"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "value": "={{ $json.date }}",
+              "type": "string"
+            },
+            {
+              "id": "emailId",
+              "name": "emailId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9747e735-2927-4982-a73c-da6f7ce82a51",
+      "name": "Extract Email Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents: [\n    {\n      parts: [\n        {\n          text: \"You are an intelligent email triage assistant. Analyze the following email and extract structured data.\\n\\nIMPORTANT RULES:\\n1. Extract ALL action items, to-dos, or tasks mentioned or implied\\n2. Extract ALL dates, deadlines, events, or appointments mentioned\\n3. Extract ALL flight information (airline, flight number, departure/arrival cities, times, dates, confirmation numbers)\\n4. Classify the email priority: high, medium, low\\n5. Determine if sender is likely an important contact (business partner, client, family, financial institution)\\n\\nRespond ONLY with valid JSON in this exact format (no markdown, no backticks, no explanation):\\n{\\\"classification\\\": \\\"todo | date | flight | informational | multiple\\\", \\\"priority\\\": \\\"high | medium | low\\\", \\\"is_important_contact\\\": true, \\\"todos\\\": [{\\\"task\\\": \\\"Description\\\", \\\"due_date\\\": \\\"YYYY-MM-DD or null\\\", \\\"priority\\\": \\\"high | medium | low\\\"}], \\\"dates\\\": [{\\\"event_name\\\": \\\"Name\\\", \\\"date\\\": \\\"YYYY-MM-DD\\\", \\\"time_start\\\": \\\"HH:MM or null\\\", \\\"time_end\\\": \\\"HH:MM or null\\\", \\\"location\\\": \\\"Location or null\\\", \\\"description\\\": \\\"Brief description\\\"}], \\\"flights\\\": [{\\\"airline\\\": \\\"Name\\\", \\\"flight_number\\\": \\\"Number or null\\\", \\\"confirmation_code\\\": \\\"Code or null\\\", \\\"departure_city\\\": \\\"City\\\", \\\"arrival_city\\\": \\\"City\\\", \\\"departure_date\\\": \\\"YYYY-MM-DD\\\", \\\"departure_time\\\": \\\"HH:MM or null\\\", \\\"arrival_date\\\": \\\"YYYY-MM-DD or null\\\", \\\"arrival_time\\\": \\\"HH:MM or null\\\"}], \\\"summary\\\": \\\"One-line summary\\\"}\\n\\nIf a category has no items, return an empty array [].\\nFor dates, use the current year if no year is specified.\\n\\n---\\n\\nFROM: \" + $json.senderName + \" <\" + $json.sender + \">\\nSUBJECT: \" + $json.subject + \"\\nDATE: \" + $json.date + \"\\n\\nBODY:\\n\" + $json.body\n        }\n      ]\n    }\n  ],\n  generationConfig: {\n    temperature: 0.1,\n    maxOutputTokens: 8192,\n    responseMimeType: \"application/json\"\n  }\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f4ac576e-ee64-411f-bd0f-72cfeb94aabc",
+      "name": "Gemini Email Analyzer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -656,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Gemini API key"
+        },
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Gemini API key (query)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini response into structured JSON\nconst items = $input.all();\nconst emails = $('Extract Email Fields').all(); // Gets ALL original emails\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  try {\n    const candidates = items[i].json.candidates;\n    if (!candidates || !candidates[0] || !candidates[0].content || !candidates[0].content.parts) {\n      throw new Error('Invalid Gemini response structure');\n    }\n    \n    let aiResponse = candidates[0].content.parts[0].text;\n    aiResponse = aiResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    \n    const parsed = JSON.parse(aiResponse);\n    \n    // Grabs the exact email data matching the current Gemini response index\n    const emailData = emails[i].json; \n    \n    results.push({\n      json: {\n        ...parsed,\n        _email: {\n          sender: emailData.sender,\n          senderName: emailData.senderName,\n          subject: emailData.subject,\n          emailId: emailData.emailId,\n          date: emailData.date\n        }\n      }\n    });\n  } catch (e) {\n    const emailData = emails[i] ? emails[i].json : {};\n    results.push({\n      json: {\n        classification: 'parse_error',\n        error: e.message,\n        rawResponse: JSON.stringify(items[i].json),\n        _email: {\n          sender: emailData.sender || '',\n          subject: emailData.subject || '',\n          emailId: emailData.emailId || ''\n        }\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "324b88de-5d8d-42d6-97bc-679940459ec4",
+      "name": "Parse Gemini Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "has-todos",
+                    "leftValue": "={{ $json.todos.length }}",
+                    "rightValue": "0",
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": "Has Todos"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "has-dates",
+                    "leftValue": "={{ $json.dates.length }}",
+                    "rightValue": "0",
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": "Has Dates"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "has-flights",
+                    "leftValue": "={{ $json.flights.length }}",
+                    "rightValue": "0",
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": "Has Flights"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": true
+        }
+      },
+      "id": "6e3b50ee-ee08-4366-80c2-5ec66958337c",
+      "name": "Route by Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -208,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst results = [];\n\n// The || [] ensures it never crashes even if 'todos' is missing\nfor (const todo of (input.todos || [])) {\n  results.push({\n    json: {\n      task: todo.task,\n      due_date: todo.due_date,\n      priority: todo.priority,\n      email_subject: input._email.subject,\n      email_sender: input._email.senderName || input._email.sender,\n      email_date: input._email.date,\n      is_important: input.is_important_contact\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "90ee2c47-be80-485f-9562-d15e420ed00b",
+      "name": "Split Todos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_FLIGHTS_DB_ID",
+          "mode": "list",
+          "cachedResultName": "📧 Email To-Dos",
+          "cachedResultUrl": "https://www.notion.so/YOUR_FLIGHTS_DB_ID"
+        },
+        "title": "={{ $json.task }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "=Priority|select",
+              "selectValue": "={{ $json.priority === 'high' ? 'High' : $json.priority === 'medium' ? 'Medium' : 'Low' }}"
+            },
+            {
+              "key": "=Due Date|date",
+              "includeTime": false,
+              "date": "={{ $json.due_date || '' }}"
+            },
+            {
+              "key": "=From|rich_text",
+              "textContent": "={{ $json.email_sender }}"
+            },
+            {
+              "key": "=Email Subject|rich_text",
+              "textContent": "={{ $json.email_subject }}"
+            },
+            {
+              "key": "=Source|rich_text",
+              "textContent": "Email"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "14b238f0-2691-4d3f-ba16-984c1d694d7c",
+      "name": "Add Todo to Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst results = [];\n\nfor (const dateItem of (input.dates || [])) {\n  let startDateTime = dateItem.date;\n  let endDateTime = null;\n  \n  if (dateItem.time_start) {\n    startDateTime = `${dateItem.date}T${dateItem.time_start}:00`;\n  }\n  if (dateItem.time_end) {\n    endDateTime = `${dateItem.date}T${dateItem.time_end}:00`;\n  } else if (dateItem.time_start) {\n    const [hours, mins] = dateItem.time_start.split(':').map(Number);\n    const endHour = String(hours + 1).padStart(2, '0');\n    endDateTime = `${dateItem.date}T${endHour}:${String(mins).padStart(2, '0')}:00`;\n  }\n  \n  results.push({\n    json: {\n      event_name: dateItem.event_name,\n      date: dateItem.date,\n      start: startDateTime,\n      end: endDateTime,\n      location: dateItem.location,\n      description: `${dateItem.description}\\n\\nSource: Email from ${input._email.senderName || input._email.sender}\\nSubject: ${input._email.subject}`,\n      email_sender: input._email.senderName || input._email.sender,\n      email_subject: input._email.subject\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "e2ce2052-f8bf-4ee1-a6b6-775aed47f4e9",
+      "name": "Split Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end || $json.start }}",
+        "additionalFields": {
+          "description": "={{ $json.description }}",
+          "location": "={{ $json.location || '' }}",
+          "summary": "={{ $json.event_name }}"
+        }
+      },
+      "id": "b461e292-3309-465e-a4c8-b20f7368450e",
+      "name": "Add Date to Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        208
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst results = [];\n\nfor (const flight of (input.flights || [])) {\n  let startDateTime = flight.departure_date;\n  let endDateTime = flight.arrival_date || flight.departure_date;\n  \n  if (flight.departure_time) {\n    startDateTime = `${flight.departure_date}T${flight.departure_time}:00`;\n  }\n  if (flight.arrival_time && flight.arrival_date) {\n    endDateTime = `${flight.arrival_date}T${flight.arrival_time}:00`;\n  } else if (flight.arrival_time) {\n    endDateTime = `${flight.departure_date}T${flight.arrival_time}:00`;\n  }\n  \n  const flightTitle = `✈️ ${flight.airline || 'Flight'} ${flight.flight_number || ''} - ${flight.departure_city} → ${flight.arrival_city}`.trim();\n  \n  let description = `Flight Details:\\n`;\n  description += `Airline: ${flight.airline || 'N/A'}\\n`;\n  description += `Flight: ${flight.flight_number || 'N/A'}\\n`;\n  description += `Confirmation: ${flight.confirmation_code || 'N/A'}\\n`;\n  description += `Route: ${flight.departure_city} → ${flight.arrival_city}\\n`;\n  description += `\\nSource: Email from ${input._email.senderName || input._email.sender}\\nSubject: ${input._email.subject}`;\n  \n  results.push({\n    json: {\n      flight_title: flightTitle,\n      start: startDateTime,\n      end: endDateTime,\n      description: description,\n      departure_city: flight.departure_city,\n      arrival_city: flight.arrival_city,\n      confirmation_code: flight.confirmation_code,\n      email_sender: input._email.senderName || input._email.sender,\n      email_subject: input._email.subject\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "229b307a-766c-437b-a6ad-6f619c5c03db",
+      "name": "Split Flights",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end || $json.start }}",
+        "additionalFields": {
+          "description": "={{ $json.description }}",
+          "summary": "={{ $json.flight_title }}"
+        }
+      },
+      "id": "41805ffa-2665-4340-86c1-4ba8232edae3",
+      "name": "Add Flight to Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        432
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_TODO_DB_ID",
+          "mode": "list",
+          "cachedResultName": "✈️ Flight Tracker",
+          "cachedResultUrl": "https://www.notion.so/YOUR_TODO_DB_ID"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "=Flight|title",
+              "title": "={{ $json.flight_title }}"
+            },
+            {
+              "key": "=Status|status",
+              "statusValue": "=Upcoming"
+            },
+            {
+              "key": "=Departure Date|date",
+              "date": "={{ $json.start }}"
+            },
+            {
+              "key": "=Confirmation Code|rich_text",
+              "textContent": "={{ $json.confirmation_code || 'N/A' }}"
+            },
+            {
+              "key": "=Route|rich_text",
+              "textContent": "={{ $json.departure_city }} → {{ $json.arrival_city }}"
+            },
+            {
+              "key": "=Source|rich_text",
+              "textContent": "=Email: {{ $json.email_subject }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fbeca637-57f3-4403-b90c-b3009a4cbae9",
+      "name": "Log Flight to Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        608
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.classification }}",
+              "rightValue": "parse_error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ccaf1227-98f4-4122-9e0e-c3bba9b4d0f5",
+      "name": "Check Parse Errors",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -480,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-log",
+              "name": "error_message",
+              "value": "=Failed to parse Gemini response for email: {{ $json._email.subject }} from {{ $json._email.sender }}. Raw: {{ $json.rawResponse }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7c30d94c-7ce7-46ac-bab8-aac269d838a3",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -208,
+        464
+      ]
+    }
+  ],
+  "connections": {
+    "Check Gmail": {
+      "main": [
+        [
+          {
+            "node": "Extract Email Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email Fields": {
+      "main": [
+        [
+          {
+            "node": "Gemini Email Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Email Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Parse Gemini Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gemini Response": {
+      "main": [
+        [
+          {
+            "node": "Route by Type",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Parse Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Type": {
+      "main": [
+        [
+          {
+            "node": "Split Todos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split Dates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split Flights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Todos": {
+      "main": [
+        [
+          {
+            "node": "Add Todo to Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Dates": {
+      "main": [
+        [
+          {
+            "node": "Add Date to Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Flights": {
+      "main": [
+        [
+          {
+            "node": "Add Flight to Calendar",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Flight to Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Parse Errors": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/Chicago",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

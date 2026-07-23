@@ -1,0 +1,245 @@
+{
+  "name": "03 Extractor: Bid4Assets",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "e31c8e1a-9bae-4eb2-ae8a-4d91dc870bc2",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// CONFIG: Bid4Assets County Storefronts\n// ============================================================\n// Update monthly from https://www.bid4assets.com/county-tax-sales\n// ============================================================\n\nconst counties = [\n  { slug: 'ClarkWAFeb26', county: 'Clark County', state: 'WA' },\n  { slug: 'ImperialFeb26', county: 'Imperial County', state: 'CA' },\n  { slug: 'ShastaFeb26', county: 'Shasta County', state: 'CA' },\n  { slug: 'AlamedaMar26', county: 'Alameda County', state: 'CA' },\n  { slug: 'SanJoaquinMar26', county: 'San Joaquin County', state: 'CA' },\n  { slug: 'MontereyMar26', county: 'Monterey County', state: 'CA' },\n  { slug: 'AmadorMar26', county: 'Amador County', state: 'CA' },\n  { slug: 'LanderNVMar26', county: 'Lander County', state: 'NV' },\n  { slug: 'MasonWAMar26', county: 'Mason County', state: 'WA' },\n  { slug: 'ElkoNVApr26', county: 'Elko County', state: 'NV' },\n  { slug: 'RiversideApr26', county: 'Riverside County', state: 'CA' },\n];\n\nreturn counties.map(c => ({\n  json: {\n    slug: c.slug,\n    county: c.county,\n    state: c.state,\n    storefrontUrl: `https://www.bid4assets.com/storefront/${c.slug}`,\n  }\n}));"
+      },
+      "id": "43ab657a-16ca-4280-a8a9-317303f2ae7a",
+      "name": "County Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.storefrontUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "055077f4-0528-48b7-a41a-552f78d3877b",
+      "name": "Fetch Storefront HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        448,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.bid4assets.com/api/storefront/auctions/index",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "take",
+              "value": "9999"
+            },
+            {
+              "name": "skip",
+              "value": "0"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "pageSize",
+              "value": "9999"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Referer",
+              "value": "=https://www.bid4assets.com/storefront/{{ $json.slug }}"
+            },
+            {
+              "name": "X-Requested-With",
+              "value": "XMLHttpRequest"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"storefrontId\": {{ $json.storefrontId }},\n  \"storefrontCollectionId\": {{ $json.collectionId }}\n}",
+        "options": {}
+      },
+      "id": "74e1ed80-01f6-488a-a44b-d73480aa30ec",
+      "name": "Fetch Auctions API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        896,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// PARSE JSON API RESPONSE - PRODUCTION v5\n// ============================================================\n// Only passes Active + Upcoming auctions to the Hub.\n// Skips Withdrawn, Sold, and Closed entries.\n// ============================================================\n\nconst items = $input.all();\nconst results = [];\nlet skipped = 0;\n\nfor (const item of items) {\n  let auctions = [];\n\n  if (Array.isArray(item.json.data)) {\n    auctions = item.json.data;\n  } else if (item.json.Data && Array.isArray(item.json.Data)) {\n    auctions = item.json.Data;\n  } else if (item.json.auctionID || item.json.AuctionID) {\n    auctions = [item.json];\n  }\n\n  if (auctions.length === 0) continue;\n\n  for (const a of auctions) {\n    const title = a.asset_title || a.Asset_title || '';\n    const auctionId = a.auctionID || a.AuctionID || '';\n    const bidAmount = a.currentBidAmount || a.CurrentBidAmount || a.minimumBid || a.MinimumBid || 0;\n    const openTime = a.bidOpenTime || a.BidOpenTime || '';\n    const closeTime = a.actualCloseTime || a.ActualCloseTime || a.bidCloseTime || a.BidCloseTime || '';\n    const liveDate = a.liveDate || a.LiveDate || '';\n    const timeRemaining = a.timeRemaining || a.TimeRemaining || '';\n    const locState = a.locatedState || a.LocatedState || '';\n\n    // --- Determine status first (to filter early) ---\n    const tr = timeRemaining.toLowerCase();\n    const isWithdrawn = title.includes('***Withdrawn***');\n\n    if (isWithdrawn) { skipped++; continue; }\n    if (tr === 'sold' || tr === 'closed') { skipped++; continue; }\n\n    // --- Status ---\n    let status = 'Active';\n    if (tr.includes('preview')) {\n      status = 'Upcoming';\n    }\n\n    // --- Property Address ---\n    let address = title || `Auction ${auctionId}`;\n\n    // --- County ---\n    let county = 'N/A';\n    const cleanTitle = title.trim();\n    const countyMatch = cleanTitle.match(/^(.+?County)/i);\n    if (countyMatch) county = countyMatch[1].trim();\n\n    // --- State ---\n    let state = locState || '';\n    if (!state) {\n      const stateMatch = cleanTitle.match(/County,?\\s*([A-Z]{2})/i);\n      if (stateMatch) state = stateMatch[1].toUpperCase();\n    }\n\n    // --- Current Bid ---\n    let bid = typeof bidAmount === 'number' ? bidAmount : 0;\n\n    // --- Bidding Date ---\n    let biddingDate = 'N/A';\n    const dateSource = openTime || liveDate || '';\n    if (dateSource) {\n      try {\n        const dt = new Date(dateSource);\n        if (!isNaN(dt.getTime())) {\n          biddingDate = dt.toLocaleDateString('en-US', {\n            month: 'long', day: 'numeric', year: 'numeric',\n            timeZone: 'America/New_York'\n          });\n        }\n      } catch (e) {}\n    }\n\n    // --- Sale Date ---\n    let saleDate = 'N/A';\n    if (closeTime) {\n      try {\n        const dt = new Date(closeTime);\n        if (!isNaN(dt.getTime())) {\n          saleDate = dt.toLocaleDateString('en-US', {\n            month: 'long', day: 'numeric', year: 'numeric',\n            timeZone: 'America/New_York'\n          });\n        }\n      } catch (e) {}\n    }\n\n    // --- Bidding Time ---\n    let biddingTime = 'Check Listing';\n    if (closeTime) {\n      try {\n        const dt = new Date(closeTime);\n        if (!isNaN(dt.getTime())) {\n          biddingTime = dt.toLocaleTimeString('en-US', {\n            hour: 'numeric', minute: '2-digit', hour12: true,\n            timeZone: 'America/New_York'\n          }) + ' ET';\n        }\n      } catch (e) {}\n    }\n\n    // --- Auction URL ---\n    const auctionUrl = auctionId ? `https://www.bid4assets.com/auction/${auctionId}` : '';\n\n    results.push({\n      json: {\n        property_address: address,\n        county: county,\n        state: state,\n        source: 'Bid4Assets',\n        status: status,\n        current_bid: bid,\n        bidding_date: biddingDate,\n        bidding_time: biddingTime,\n        sale_date: saleDate,\n        auction_url: auctionUrl,\n        time_remaining: timeRemaining,\n        unique_id: ''\n      }\n    });\n  }\n}\n\nconsole.log(`✅ ${results.length} active auctions passed, ${skipped} withdrawn/sold/closed skipped`);\n\nif (results.length === 0) {\n  return [{ json: {\n    property_address: 'No active auctions found', county: 'N/A', state: '',\n    source: 'Bid4Assets', status: 'Active', current_bid: 0,\n    bidding_date: 'N/A', bidding_time: 'N/A', sale_date: 'N/A',\n    auction_url: '', time_remaining: '', unique_id: 'skip'\n  }}];\n}\n\nreturn results;"
+      },
+      "id": "4d418662-7543-4a34-8780-9286a0ca9978",
+      "name": "Parse Auction JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// EXTRACT StorefrontId + CollectionIds from Kendo config\n// ============================================================\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const html = item.json.data || '';\n  const county = item.json.county || 'Unknown';\n  const state = item.json.state || '';\n  const slug = item.json.slug || '';\n\n  if (!html || html.length < 500) {\n    console.log(`⚠️ ${county}, ${state}: No valid HTML returned`);\n    continue;\n  }\n\n  // --- Extract StorefrontId ---\n  let storefrontId = null;\n  const sfMatch = html.match(/\"StorefrontId\"\\s*:\\s*(\\d+)/i)\n    || html.match(/getauctiondisplay\\/(\\d+)/i)\n    || html.match(/downloadpropertylist\\/(\\d+)/i)\n    || html.match(/storefrontId\\s*:\\s*(\\d+)/i);\n  if (sfMatch) storefrontId = sfMatch[1];\n\n  if (!storefrontId) {\n    console.log(`⚠️ ${county}, ${state}: Could not find StorefrontId`);\n    continue;\n  }\n\n  // --- Extract CollectionIds from Kendo data ---\n  const collections = [];\n  const kendoDataMatch = html.match(/\"Data\"\\s*:\\s*\\[([\\s\\S]*?)\\]\\s*,\\s*\"Total\"/i);\n  if (kendoDataMatch) {\n    try {\n      const dataStr = '[' + kendoDataMatch[1] + ']';\n      const folders = JSON.parse(dataStr);\n      for (const folder of folders) {\n        if (folder.StorefrontCollectionId) {\n          collections.push({\n            id: folder.StorefrontCollectionId,\n            name: folder.CollectionName || '',\n          });\n        }\n      }\n    } catch (e) {\n      // Fallback regex\n      const collRegex = /\"StorefrontCollectionId\"\\s*:\\s*(\\d+)/gi;\n      let collMatch;\n      while ((collMatch = collRegex.exec(html)) !== null) {\n        collections.push({ id: parseInt(collMatch[1]), name: '' });\n      }\n    }\n  }\n\n  // --- Extract dates from timeline ---\n  let startDate = 'N/A';\n  let endDate = 'N/A';\n  \n  const startsMatch = html.match(/Starts<\\/span>\\s*<span[^>]*>([^<]+)/i);\n  if (startsMatch) {\n    const d = startsMatch[1].trim().match(/(\\w+\\s+\\d{1,2},?\\s+\\d{4})/);\n    if (d) startDate = d[1];\n  }\n  const endsMatch = html.match(/Ends<\\/span>\\s*<span[^>]*>([^<]+)/i);\n  if (endsMatch) {\n    const d = endsMatch[1].trim().match(/(\\w+\\s+\\d{1,2},?\\s+\\d{4})/);\n    if (d) endDate = d[1];\n  }\n\n  console.log(`✅ ${county}, ${state}: StorefrontId=${storefrontId}, Collections=${collections.length}`);\n\n  // Output one item per collection\n  if (collections.length > 0) {\n    for (const coll of collections) {\n      // Extract closing time from collection name\n      let closingTime = 'Check Listing';\n      const ct = coll.name.match(/Closing\\s+at\\s+([^\"]+)/i);\n      if (ct) closingTime = ct[1].trim();\n\n      results.push({\n        json: {\n          county, state, slug, storefrontId,\n          collectionId: coll.id,\n          collectionName: coll.name,\n          startDate, endDate, closingTime,\n        }\n      });\n    }\n  } else {\n    console.log(`⚠️ ${county}, ${state}: No collections found`);\n  }\n}\n\nif (results.length === 0) {\n  return [{ json: { error: 'No storefronts returned valid data' } }];\n}\n\nreturn results;"
+      },
+      "id": "f7a8822b-835c-42e5-99ee-aa2ba0b09638",
+      "name": "Extract IDs & Dates1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "YOUR_HUB_WORKFLOW_ID",
+        "options": {}
+      },
+      "id": "de9e6f48-b3e1-49cb-a5f5-b441ca1dc577",
+      "name": "Send to Hub",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1184,
+        208
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "County Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "County Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Storefront HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Storefront HTML": {
+      "main": [
+        [
+          {
+            "node": "Extract IDs & Dates1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Auctions API": {
+      "main": [
+        [
+          {
+            "node": "Parse Auction JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Auction JSON": {
+      "main": [
+        [
+          {
+            "node": "Send to Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract IDs & Dates1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Auctions API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/Chicago",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

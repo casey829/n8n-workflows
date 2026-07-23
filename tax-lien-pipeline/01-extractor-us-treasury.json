@@ -1,0 +1,103 @@
+{
+  "name": "01 Extractor: US Treasury",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "3548a37e-24f4-4228-8792-10a0395429c4",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -256,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.treasury.gov/auctions/treasury/rp/realprop.shtml",
+        "options": {}
+      },
+      "id": "5edf3e17-79e6-462a-b78b-6b1df42655e9",
+      "name": "Fetch HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -32,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "YOUR_HUB_WORKFLOW_ID",
+        "options": {}
+      },
+      "id": "f3e7c5fc-2a53-44f0-8fb5-398377499ea2",
+      "name": "Send to Hub",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        416,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data;\n\n// 1. Clean the HTML\nlet cleanText = html.replace(/<(script|style)\\b[^<]*(?:(?!<\\/\\1>)<[^<]*)*<\\/\\1>/gi, ' ');\ncleanText = cleanText.replace(/&nbsp;/gi, ' ');\ncleanText = cleanText.replace(/<[^>]*>?/gm, ' ');\ncleanText = cleanText.replace(/\\s+/g, ' ');\n\nconst results = [];\n\n// 2. Expanded Regex to capture the description text after the date\nconst regex = /(RESIDENTIAL LAND|COMMERCIAL BUILDING|SINGLE FAMILY HOME|RURAL LAND|AGRICULTURAL LAND|MANUFACTURED HOME|TOWNHOUSE|ESTATE HOME|VACANT LAND|COMMERCIAL CONDO|OFFICE CONDO UNIT|LAND WITH DWELLING)\\s*:\\s*(.*?)\\s*ONLINE AUCTION DAT\\s*E:\\s*([A-Za-z]+,\\s*[A-Za-z]+\\s*\\d{1,2},\\s*\\d{4})(.*?)(?=(?:RESIDENTIAL LAND|COMMERCIAL BUILDING|SINGLE FAMILY HOME|RURAL LAND|AGRICULTURAL LAND|MANUFACTURED HOME|TOWNHOUSE|ESTATE HOME|VACANT LAND|COMMERCIAL CONDO|OFFICE CONDO UNIT|LAND WITH DWELLING)\\s*:|$)/gi;\n\nlet match;\nwhile ((match = regex.exec(cleanText)) !== null) {\n  let address = match[2].trim();\n  let saleDate = match[3].trim();\n  let description = match[4] || \"\";\n\n  // Hunt for the County in the description\n  let countyMatch = description.match(/([A-Za-z\\s]+County)/i);\n  let county = countyMatch ? countyMatch[1].trim() : \"N/A - Check Listing\";\n\n  results.push({\n    json: {\n      property_address: address,\n      county: county,\n      state: \"\",              // not published on the index page\n      source: \"US Treasury\",\n      status: \"Upcoming\",\n      sale_date: saleDate,\n      bidding_date: saleDate, // Treasury uses the same date for both\n      bidding_time: \"Check Listing\",\n      current_bid: 0,         // not published on the index page\n      auction_url: \"https://www.treasury.gov/auctions/treasury/rp/realprop.shtml\",\n      time_remaining: \"\",\n      unique_id: ''\n    }\n  });\n}\n\nif (results.length === 0) {\n  return [{ json: { error: \"No matches found.\", text_sample: cleanText.substring(0, 500) } }];\n}\n\nreturn results;"
+      },
+      "id": "05d516f6-3685-47ba-80cb-abd48c3b1478",
+      "name": "Parse Treasury Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        48
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch HTML": {
+      "main": [
+        [
+          {
+            "node": "Parse Treasury Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Treasury Data": {
+      "main": [
+        [
+          {
+            "node": "Send to Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  }
+}

@@ -1,0 +1,168 @@
+{
+  "name": "Job Application Follow-Up Reminder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "b8fd4463-1e7c-443c-addf-54afe7d6f8bb",
+      "name": "Daily 9AM Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "JOB_PIPELINE_DB_ID",
+              "value": "YOUR_TASKS_DB_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3e3489ea-499f-4ceb-8364-3ef97fc14e3c",
+      "name": "Global Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $json.JOB_PIPELINE_DB_ID }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    \"filter\": {\n      \"and\": [\n        {\n          \"property\": \"Status\",\n          \"select\": {\n            \"equals\": \"Applied\"\n          }\n        },\n        {\n          \"property\": \"Follow-Up Date\",\n          \"date\": {\n            \"on_or_before\": $now.toFormat('yyyy-MM-dd')\n          }\n        }\n      ]\n    }\n  }\n}}",
+        "options": {}
+      },
+      "id": "b2b2854e-08ef-4cef-a02c-c648da151759",
+      "name": "Get Jobs Ready for Follow-Up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json.results || [];\n\nif (results.length === 0) return [];\n\nreturn results.map(page => {\n  const props = page.properties || {};\n  return {\n    json: {\n      page_id: page.id,\n      job_title: props['Job Title']?.title?.[0]?.plain_text || '',\n      company: props['Company']?.rich_text?.[0]?.plain_text || ''\n    }\n  };\n});"
+      },
+      "id": "82da71cf-5c27-4d19-9fc3-f67c2e5a9022",
+      "name": "Extract Follow-Up Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.page_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    \"properties\": {\n      \"Status\": {\n        \"select\": {\n          \"name\": \"Follow-Up Ready\"\n        }\n      }\n    }\n  }\n}}",
+        "options": {}
+      },
+      "id": "90ddc8dc-db2d-48c4-a5e9-3fd8e91ff59c",
+      "name": "Queue Follow-Up for Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 9AM Check": {
+      "main": [
+        [
+          {
+            "node": "Global Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Global Configuration": {
+      "main": [
+        [
+          {
+            "node": "Get Jobs Ready for Follow-Up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Jobs Ready for Follow-Up": {
+      "main": [
+        [
+          {
+            "node": "Extract Follow-Up Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Follow-Up Jobs": {
+      "main": [
+        [
+          {
+            "node": "Queue Follow-Up for Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/Phoenix",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

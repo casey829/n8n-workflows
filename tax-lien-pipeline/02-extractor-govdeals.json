@@ -1,0 +1,195 @@
+{
+  "name": "02 Extractor: GovDeals",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "0a9d28e5-ad06-442f-ac36-26052f254e55",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://maestro.lqdt1.com/search/list",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json, text/plain, */*"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.9"
+            },
+            {
+              "name": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "name": "Ocp-Apim-Subscription-Key",
+              "value": "YOUR_GOVDEALS_SUBSCRIPTION_KEY"
+            },
+            {
+              "name": "Origin",
+              "value": "https://www.govdeals.com"
+            },
+            {
+              "name": "Referer",
+              "value": "https://www.govdeals.com/"
+            },
+            {
+              "name": "Sec-Fetch-Dest",
+              "value": "empty"
+            },
+            {
+              "name": "Sec-Fetch-Mode",
+              "value": "cors"
+            },
+            {
+              "name": "Sec-Fetch-Site",
+              "value": "cross-site"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"
+            },
+            {
+              "name": "sec-ch-ua",
+              "value": "\"Chromium\";v=\"145\", \"Not:A-Brand\";v=\"99\""
+            },
+            {
+              "name": "sec-ch-ua-mobile",
+              "value": "?1"
+            },
+            {
+              "name": "sec-ch-ua-platform",
+              "value": "\"iOS\""
+            },
+            {
+              "name": "x-api-correlation-id",
+              "value": "YOUR_CORRELATION_ID"
+            },
+            {
+              "name": "x-api-key",
+              "value": "YOUR_GOVDEALS_API_KEY"
+            },
+            {
+              "name": "x-ecom-session-id",
+              "value": "YOUR_SESSION_ID"
+            },
+            {
+              "name": "x-page-unique-id",
+              "value": "aHR0cHM6Ly93d3cuZ292ZGVhbHMuY29tL2VuL3JlYWwtZXN0YXRlLXRheC1kZWVkLWxpZW4tc2FsZXM"
+            },
+            {
+              "name": "x-referer",
+              "value": "https://www.govdeals.com/en/real-estate-tax-deed-lien-sales"
+            },
+            {
+              "name": "x-user-id",
+              "value": "-1"
+            },
+            {
+              "name": "x-user-timezone",
+              "value": "America/Chicago"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"categoryIds\": \"\",\n  \"businessId\": \"GD\",\n  \"searchText\": \"*\",\n  \"isQAL\": false,\n  \"locationId\": null,\n  \"model\": \"\",\n  \"makebrand\": \"\",\n  \"auctionTypeId\": null,\n  \"page\": 1,\n  \"displayRows\": 120,\n  \"sortField\": \"bestfit\",\n  \"sortOrder\": \"desc\",\n  \"sessionId\": \"YOUR_SESSION_ID\",\n  \"requestType\": \"search\",\n  \"responseStyle\": \"productsOnly\",\n  \"facets\": [\n    \"categoryName\",\n    \"auctionTypeID\",\n    \"condition\",\n    \"saleEventName\",\n    \"sellerDisplayName\",\n    \"product_pricecents\",\n    \"isReserveMet\",\n    \"hasBuyNowPrice\",\n    \"isReserveNotMet\",\n    \"sellerType\",\n    \"warehouseId\",\n    \"region\",\n    \"currencyTypeCode\",\n    \"categoryName\",\n    \"tierId\"\n  ],\n  \"facetsFilter\": [\n    \"{!tag=product_category_external_id}product_category_external_id:\\\"t11\\\"\",\n    \"{!tag=product_category_external_id}product_category_external_id:\\\"95A\\\"\"\n  ],\n  \"timeType\": \"\",\n  \"sellerTypeId\": null,\n  \"accountIds\": []\n}",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "0235da67-de10-4d49-b17e-fd5f5cf3fc60",
+      "name": "Fetch GovDeals API1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Access the first item's JSON data directly\nconst rawData = $input.first().json;\n\n// Check if the expected array exists\nif (!rawData || !rawData.assetSearchResults || rawData.assetSearchResults.length === 0) {\n  return [{ json: { error: \"No properties found or API structure changed.\", debug_keys: Object.keys(rawData || {}) } }];\n}\n\nconst properties = rawData.assetSearchResults;\nconst results = [];\n\nfor (const item of properties) {\n  \n  // 1. Extract the Address \n  let description = item.assetShortDescription || \"N/A\";\n  let address = description;\n\n  if (description.includes(\" - \")) {\n    address = description.split(\" - \").slice(1).join(\" - \").trim();\n  }\n\n  // 2. Extract location info\n  const city = item.locationCity || \"N/A\";\n  const state = item.locationState || \"\";\n  const county = city !== \"N/A\" ? `${city}` : \"N/A - Check Listing\";\n\n  // 3. Format Dates\n  let saleDate = item.assetAuctionEndDate || \"\";\n  let biddingDate = item.assetAuctionStartDate || \"\";\n  let biddingTime = \"\";\n  \n  if (saleDate && saleDate.includes(\"T\")) {\n    biddingTime = saleDate.split(\"T\")[1].replace(\"Z\", \"\");\n    saleDate = saleDate.split(\"T\")[0];\n  }\n  if (biddingDate && biddingDate.includes(\"T\")) {\n    biddingDate = biddingDate.split(\"T\")[0];\n  }\n\n  // 4. Determine status\n  let status = \"Active\";\n  const timeRemaining = item.timeRemaining || \"\";\n  if (timeRemaining.toLowerCase().includes(\"sold\")) status = \"Sold\";\n  else if (timeRemaining.toLowerCase().includes(\"closed\")) status = \"Closed\";\n\n  // 5. Build auction URL\n  const assetId = item.assetId || item.id || \"\";\n  const auctionUrl = assetId ? `https://www.govdeals.com/asset/${assetId}` : \"\";\n\n  // 6. Build unique ID for deduplication\n  const uniqueId = `govdeals|${county}|${address}`.toLowerCase().replace(/\\s+/g, '');\n\n  results.push({\n    json: {\n      property_address: address,\n      county: county,\n      state: state,\n      source: \"GovDeals\",\n      status: status,\n      sale_date: saleDate,\n      bidding_date: biddingDate,\n      bidding_time: biddingTime,\n      current_bid: item.currentBid || 0,\n      auction_url: auctionUrl,\n      time_remaining: timeRemaining,\n      unique_id: uniqueId\n    }\n  });\n}\n\nconsole.log(`✅ GovDeals: ${results.length} properties extracted`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "215cf558-8d12-4802-96cf-5abb5c9e8db4",
+      "name": "Parse GovDeals Data"
+    },
+    {
+      "parameters": {
+        "workflowId": "YOUR_HUB_WORKFLOW_ID",
+        "options": {}
+      },
+      "id": "8ad9b02c-97c8-469f-90d2-a562abdee300",
+      "name": "Send to Hub",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        640,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch GovDeals API1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch GovDeals API1": {
+      "main": [
+        [
+          {
+            "node": "Parse GovDeals Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse GovDeals Data": {
+      "main": [
+        [
+          {
+            "node": "Send to Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}

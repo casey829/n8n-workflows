@@ -1,0 +1,652 @@
+{
+  "name": "Job Scraper & AI Resume Tailoring",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "58c51a59-d27d-4c05-b922-a19aad501fc1",
+      "name": "Daily 8AM Weekdays",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2464,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "JOB_PIPELINE_DB_ID",
+              "value": "YOUR_NOTION_JOB_PIPELINE_DB_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "CANDIDATE_NAME",
+              "value": "{{FULL NAME}}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "CANDIDATE_RESUME",
+              "value": "Name: {{FULL NAME}} | Phone: {{PHONE}} | Email: {{EMAIL}} | LinkedIn: {{LINKEDIN URL}} | Location: {{CITY, STATE}}\\n\\n{{One-line professional summary.}}\\n\\nCURRENT: {{Title}} at {{Company}} ({{dates}}) - {{key responsibilities}}\\nPREVIOUS: {{Title}} at {{Company}} ({{dates}}) - {{achievements}}. {{Repeat for each prior role.}}\\nEDUCATION: {{Degree, Institution, Year}}\\nCERTS: {{Certifications}}\\nSKILLS: {{Comma-separated skills}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "36539145-008d-4596-9b49-f2214cecea76",
+      "name": "Global Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2240,
+        -128
+      ],
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const searches = [\n  { query: 'Fractional CMO United States', type: 'fractional' },\n  { query: 'Part time marketing manager United States', type: 'part-time' },\n  { query: 'Fractional VP of Marketing United States', type: 'fractional' },\n  { query: 'Part time marketing director United States', type: 'part-time' },\n  { query: 'Fractional Head of Marketing United States', type: 'fractional' },\n  { query: 'Part time CMO United States', type: 'part-time' }\n];\n\nreturn searches.map(s => ({ json: s }));"
+      },
+      "id": "8b636bd8-0d6e-40d0-af08-8d33a2ce0e11",
+      "name": "Define Search Terms",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2016,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google_jobs"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "location",
+              "value": "United States"
+            },
+            {
+              "name": "hl",
+              "value": "en"
+            },
+            {
+              "name": "chips",
+              "value": "date_posted:today"
+            },
+            {
+              "name": "gl",
+              "value": "us"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth"
+      },
+      "id": "ff3821f4-14d4-401a-b62e-de6fb747c757",
+      "name": "Search Google Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1792,
+        -224
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "",
+          "name": "SerpApi"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst allJobs = [];\nconst seenTitleCompany = new Set();\nconst seenLinks        = new Set();\nconst seenDescSnippets = new Set();\n\nfunction isWithin24Hours(postedStr, description) {\n  if (!postedStr) return false;\n  const s = postedStr.toLowerCase().trim();\n  const desc = (description || '').toLowerCase();\n  if (desc.includes('30+ days ago') || desc.includes('weeks ago') || desc.includes('month ago') || desc.includes('30 days ago')) return false;\n  if (s.includes('week') || s.includes('month') || s.includes('year') || s.includes('+')) return false;\n  if (s.includes('minute') || s.includes('hour') || s.includes('just now') || s === 'today') return true;\n  if (/^1\\s+day/.test(s) || s === '1 day ago' || /^a day/.test(s)) return true;\n  if (/\\b([2-9]|[1-9]\\d+)\\s+day/.test(s)) return false;\n  return false;\n}\n\nfunction isDuplicateLink(link) {\n  if (!link || link.length < 10) return false;\n  try {\n    const base = new URL(link).origin + new URL(link).pathname;\n    if (seenLinks.has(base)) return true;\n    seenLinks.add(base);\n  } catch(e) {\n    if (seenLinks.has(link)) return true;\n    seenLinks.add(link);\n  }\n  return false;\n}\n\nfunction isDuplicateDescription(desc) {\n  if (!desc || desc.trim().length < 100) return false;\n  const snippet = desc.substring(0, 300).toLowerCase().replace(/\\s+/g, ' ').trim();\n  if (seenDescSnippets.has(snippet)) return true;\n  seenDescSnippets.add(snippet);\n  return false;\n}\n\nfor (const item of items) {\n\n  // ── SERP API FORMAT ──────────────────────────────────────────────────────\n  const serpJobs = item.json.jobs_results || [];\n  for (const job of serpJobs) {\n    const tcKey = `${(job.title||'').toLowerCase().trim()}|${(job.company_name||'').toLowerCase().trim()}`;\n    if (seenTitleCompany.has(tcKey)) continue;\n    seenTitleCompany.add(tcKey);\n\n    const ext = job.detected_extensions || {};\n    if (!isWithin24Hours(ext.posted_at, job.description)) continue;\n\n    let bestApplyLink = job.share_link || '';\n    let bestSource = job.via || '';\n    if (job.apply_options && job.apply_options.length > 0) {\n      const premium = job.apply_options.find(o =>\n        o.title.toLowerCase().includes('linkedin') ||\n        o.title.toLowerCase().includes('indeed') ||\n        o.title.toLowerCase().includes('greenhouse') ||\n        o.title.toLowerCase().includes('lever') ||\n        o.title.toLowerCase().includes('workday') ||\n        (job.company_name && o.title.toLowerCase().includes(job.company_name.toLowerCase()))\n      );\n      if (premium) { bestApplyLink = premium.link; bestSource = premium.title; }\n      else { bestApplyLink = job.apply_options[0].link; bestSource = job.apply_options[0].title || job.via; }\n    }\n\n    if (isDuplicateLink(bestApplyLink)) continue;\n    if (isDuplicateDescription(job.description)) continue;\n\n    allJobs.push({\n      title: job.title || '',\n      company: job.company_name || '',\n      location: job.location || 'Remote',\n      description: (job.description || '').substring(0, 3000),\n      job_link: job.share_link || '',\n      apply_link: bestApplyLink,\n      posted: ext.posted_at || '',\n      schedule: ext.schedule_type || '',\n      salary: ext.salary || '',\n      source: bestSource,\n      api_source: 'SerpAPI',\n      job_id: job.job_id || `${job.title}-${job.company_name}`.replace(/\\s/g,'-').toLowerCase()\n    });\n  }\n\n  // ── JSEARCH API FORMAT ───────────────────────────────────────────────────\n  const jsJobs = item.json.data || [];\n  for (const job of jsJobs) {\n    const title = job.job_title || '';\n    const company = job.employer_name || '';\n    const tcKey = `${title.toLowerCase().trim()}|${company.toLowerCase().trim()}`;\n    if (seenTitleCompany.has(tcKey)) continue;\n    seenTitleCompany.add(tcKey);\n\n   // ── DATE GATE: explicitly block anything older than 24 hours ───────────\n    let isRecent = false;\n    if (job.job_posted_at_timestamp) {\n      const diffHours = (Date.now() / 1000 - job.job_posted_at_timestamp) / 3600;\n      isRecent = diffHours <= 24; \n    } else if (job.job_posted_at_datetime_utc) {\n      const diffHours = (Date.now() - new Date(job.job_posted_at_datetime_utc).getTime()) / 3600000;\n      isRecent = diffHours <= 24; \n    }\n    if (!isRecent) continue;\n\n    // ── EXPERIENCE GATE: block junior roles using JSearch's own data ────────\n    const expMonths = job.job_required_experience?.required_experience_in_months;\n    if (expMonths && expMonths < 48) continue;\n\n    const applyLink = job.job_apply_link || job.job_google_link || '';\n    if (isDuplicateLink(applyLink)) continue;\n    if (isDuplicateDescription(job.job_description)) continue;\n\n    const city = job.job_city || '';\n    const state = job.job_state || '';\n    const location = [city, state].filter(Boolean).join(', ') ||\n      (job.job_is_remote ? 'Remote' : (job.job_country || 'Remote'));\n\n    const salary = (job.job_min_salary && job.job_max_salary)\n      ? `${job.job_min_salary}-${job.job_max_salary} ${job.job_salary_currency||''}`.trim() : '';\n\n    allJobs.push({\n      title, company, location,\n      description: (job.job_description || '').substring(0, 3000),\n      job_link: applyLink,\n      apply_link: applyLink,\n      posted: job.job_posted_at_datetime_utc || '',\n      schedule: job.job_employment_type || '',\n      salary,\n      source: job.job_publisher || 'JSearch',\n      api_source: 'JSearch',\n      job_id: job.job_id || `${title}-${company}`.replace(/\\s/g,'-').toLowerCase()\n    });\n  }\n}\n\nif (allJobs.length === 0) return [];\nreturn allJobs.map(j => ({ json: j }));"
+      },
+      "id": "f1b0cfbe-11db-440e-bdb4-12c62382c22e",
+      "name": "Flatten & Deduplicate Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1344,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "check-no-jobs",
+              "leftValue": "={{ $json.no_jobs }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            },
+            {
+              "id": "f9668aac-d999-4663-97cd-16894eb97045",
+              "leftValue": "={{ $json.title || \"\" }}\n",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3fd3341d-0cca-46f4-9ae6-83eb04cf1217",
+      "name": "Has Jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        -128
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('Global Configuration').first().json.JOB_PIPELINE_DB_ID }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ \"page_size\": 100 }",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5
+            }
+          }
+        }
+      },
+      "id": "eeddef35-d695-4d14-ae89-2edaba00c6e3",
+      "name": "Get Existing Jobs from Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -896,
+        -128
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const incomingJobs = $('Has Jobs?').all();\nconst existingData = $('Get Existing Jobs from Notion').all();\n\nconst existingTitles = new Set();\nexistingData.forEach(item => {\n  const results = item.json.results || [];\n  results.forEach(page => {\n    const title = (page.properties?.['To-do']?.title?.[0]?.plain_text || '').toLowerCase().trim();\n    const company = (page.properties?.['Company']?.rich_text?.[0]?.plain_text || '').toLowerCase().trim();\n    if (title) existingTitles.add(`${company}|${title}`);\n  });\n});\n\nfunction normalizeTitle(title) {\n  return title\n    .toLowerCase()\n    .replace(/\\(.*?\\)/g, '')\n    .replace(/[-–|,]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction isSimilarTitle(a, b) {\n  const na = normalizeTitle(a);\n  const nb = normalizeTitle(b);\n  if (na.length < 10 || nb.length < 10) return na === nb;\n  return na.includes(nb) || nb.includes(na);\n}\n\nconst uniqueJobs = [];\n\nfor (const job of incomingJobs) {\n  const title = (job.json.title || '').toLowerCase().trim();\n  const company = (job.json.company || '').toLowerCase().trim();\n  const key = `${company}|${title}`;\n\n  if (existingTitles.has(key)) continue;\n\n  const isDuplicate = uniqueJobs.some(existing => {\n    const ec = (existing.json.company || '').toLowerCase().trim();\n    if (ec !== company) return false;\n    return isSimilarTitle(existing.json.title || '', title);\n  });\n\n  if (isDuplicate) continue;\n\n  uniqueJobs.push(job);\n}\n\nreturn uniqueJobs.length > 0 ? uniqueJobs : [{ json: { _empty: true } }];"
+      },
+      "id": "4cbf4770-67a9-43de-be29-0348980a291d",
+      "name": "Check Duplicates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = $input.all();\n\nreturn jobs.filter(item => {\n  if (item.json._empty) return false;\n\n  const origTitle       = item.json.title || '';\n  const origLocation    = item.json.location || '';\n  const origDescription = item.json.description || '';\n  const origCompany     = item.json.company || '';\n\n  const title       = origTitle.toLowerCase();\n  const location    = origLocation.toLowerCase();\n  const description = origDescription.toLowerCase();\n\n  // Catches LinkedIn's habit of injecting \"Promoted\" into the company or title\n  const adPtn = /^\\s*promoted\\s*$|\\b(promoted|sponsored)\\b/i;\n  if (adPtn.test(origTitle) || adPtn.test(origCompany)) return false;\n\n  const platformNoticePtn = /pause before you act|be cautious|urgent demands|requests for payments|safety tip|fraud warning|job alert:|sign in to apply|create a free account|download the app|linkedin premium|easy apply only|similar jobs|people also viewed/i;\n  if (platformNoticePtn.test(origTitle)) return false;\n  if (platformNoticePtn.test(origDescription.substring(0, 500))) return false;\n\n  // Block stubs — real jobs always have at least 40 words\n  const wordCount = origDescription.trim().split(/\\s+/).length;\n  if (wordCount < 40) return false;\n\n  // ── FIX 2: BLOCK JUNIOR & ENTRY-LEVEL ROLES ─────────────────────────────\n  const juniorPtn = /\\b(intern(ship)?|entry[\\s\\-]?level|junior\\s+\\w+|marketing\\s+assistant|brand\\s+assistant|digital\\s+assistant|social\\s+media\\s+coordinator|marketing\\s+coordinator|email\\s+coordinator|content\\s+coordinator|marketing\\s+associate\\b|for\\s+(students|graduates|freshers)|recent\\s+graduate|new\\s+grad|0[\\s\\-]2\\s+years|1[\\s\\-]2\\s+years\\s+experience)\\b/i;\n  if (juniorPtn.test(origTitle)) return false;\n  if (juniorPtn.test(origDescription.substring(0, 600))) return false;\n\n  // ── FIX 3: ENFORCE SENIORITY FOR ALL ROLES (Based on the candidate's resume) ───\n  // Added 'cmo' to the global senior regex and enforced it as a strict gate\n  const seniorPtn = /\\b(senior|sr\\b|director|vp\\b|vice\\s+president|head\\s+of|chief|manager|lead\\s+\\w+|principal|executive|fractional|cmo)\\b/i;\n  if (!seniorPtn.test(origTitle)) return false;\n\n  // ── EXISTING NEGATIVE KEYWORDS ───────────────────────────────────────────\n  const negPtn = /\\b(freshers?|for women|for men|for students|training provided|no experience required|work from home jobs for|jobs for)\\b/i;\n  if (negPtn.test(origTitle) || negPtn.test(origDescription)) return false;\n\n  // ── US / REMOTE CHECK ────────────────────────────────────────────────────\n  const usFullNames = /\\b(united states|alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)\\b/i;\n  const usAbbrs     = /\\b(US|USA|U\\.S\\.|AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\\b/;\n  const hasUsSignal = usFullNames.test(origDescription) || usFullNames.test(origLocation) || usFullNames.test(origTitle) ||\n                      usAbbrs.test(origDescription) || usAbbrs.test(origLocation) || usAbbrs.test(origTitle);\n\n  const foreignPtn = [\n    /\\buk\\b/i, /united kingdom|london|england|scotland|wales/i,\n    /india|bangalore|delhi|mumbai/i, /canada|toronto|vancouver|ontario/i,\n    /australia|sydney|melbourne/i, /europe|germany|france|spain|italy|netherlands/i,\n    /philippines|pakistan|nigeria|indonesia/i,\n    /mexico|brazil|argentina|chile|colombia/i,\n    /UAE|dubai|saudi|singapore|malaysia/i, /south africa|kenya|ghana/i\n  ];\n  const hasForeign   = foreignPtn.some(p => p.test(origLocation) || p.test(origTitle) || p.test(origCompany));\n  const isCleanRemote = (location.includes('remote') || location.includes('anywhere')) && hasUsSignal && !hasForeign;\n\n  return (hasUsSignal || isCleanRemote) && !hasForeign;\n});"
+      },
+      "id": "f3d4b94d-dc23-4bdf-bdce-c9d61961216a",
+      "name": "Pre-Filter by Relevance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 10
+      },
+      "id": "808071b1-6976-469b-b166-77d242cdac2b",
+      "name": "Limit",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  system_instruction: {\n    parts: [{\n      text: \"You are an expert resume tailoring assistant. Your goal is to align the candidate's experience with the specific job requirements. CRITICAL FORMATTING RULE: Do absolutely NOT include any sign-off, signature, closing salutation, or name at the end of the cover letter. Do not write 'Sincerely,' 'Best regards,' or the candidate's name. The email signature will be attached automatically by another system. End the cover letter immediately after the final paragraph.\"\n    }]\n  },\n  contents: [{\n    parts: [{\n      text: \"--- JOB POSTING ---\\nTitle: \" + ($json.title || '') + \"\\nCompany: \" + ($json.company || '') + \"\\nLocation: \" + ($json.location || '') + \"\\nDescription: \" + ($json.description || '').replace(/[\\n\\r]+/g, ' ').substring(0, 2000) + \"\\n\\n--- CANDIDATE RESUME ---\\\\n\" + $('Global Configuration').first().json.CANDIDATE_RESUME\n    }]\n  }],\n  generationConfig: {\n    temperature: 0.3,\n    maxOutputTokens: 8192,\n    responseMimeType: \"application/json\",\n    responseSchema: {\n      type: \"OBJECT\",\n      properties: {\n        tailored_summary: { type: \"STRING\", description: \"A tailored professional summary (3-4 sentences)\" },\n        cover_letter: { type: \"STRING\", description: \"A cover letter (250 words max) ending immediately after the final paragraph with no sign-off.\" },\n        talking_points: {\n          type: \"ARRAY\",\n          items: { type: \"STRING\" },\n          description: \"3-5 key talking points\"\n        },\n        match_score: { type: \"INTEGER\", description: \"A match score from 1-100\" },\n        recommended_subject_line: { type: \"STRING\", description: \"A recommended email subject line\" }\n      },\n      required: [\"tailored_summary\", \"cover_letter\", \"talking_points\", \"match_score\", \"recommended_subject_line\"]\n    }\n  }\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "584aa17c-eb06-4527-88f4-430e5988f814",
+      "name": "AI Tailor Resume & Cover Letter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        -208
+      ],
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Gemini API key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  (() => {\n    // 1. Safely grab the AI's tailored content from the current node\n    const aiResponse = $json.ai_cleaned || {\n      match_score: 0,\n      recommended_subject_line: \"Application: AI Review Required\",\n      tailored_summary: \"AI formatting error. Please review the raw output.\",\n      cover_letter: \"AI formatting error. Please review the raw output.\",\n      talking_points: [\"AI error - could not parse.\"]\n    };\n\n    // 2. THE FIX: Grab the actual job data from the Loop node, NOT the Gemini response!\n    const job = $('Loop Over Items').item.json;\n\n    // 3. Ensure the URL is valid, otherwise pass null to prevent Notion crashes\n    let safeApplyLink = null;\n    if (job.apply_link && job.apply_link.startsWith('http')) {\n        safeApplyLink = job.apply_link;\n    } else if (job.job_link && job.job_link.startsWith('http')) {\n        safeApplyLink = job.job_link;\n    }\n\n    return JSON.stringify({\n      parent: { database_id: $('Global Configuration').first().json.JOB_PIPELINE_DB_ID },\n      properties: {\n        'To-do': { title: [{ text: { content: (job.title || 'Untitled Job').substring(0, 2000) } }] },\n        'Company': { rich_text: [{ text: { content: (job.company || 'Unknown').substring(0, 2000) } }] },\n        'Location': { rich_text: [{ text: { content: (job.location || 'Remote').substring(0, 2000) } }] },\n        'Status': { select: { name: 'Awaiting Review' } },\n        'Type': { select: { name: 'Job' } },\n        // FORCE NUMBER: Prevent string-based API crashes from the LLM\n        'Match Score': { number: Number(aiResponse.match_score) || 0 },\n        'Source': { rich_text: [{ text: { content: (job.source || '').substring(0, 2000) } }] },\n        'Posted': { rich_text: [{ text: { content: (job.posted || '').substring(0, 2000) } }] },\n        'Apply Link': { url: safeApplyLink },\n        'Subject Line': { rich_text: [{ text: { content: (aiResponse.recommended_subject_line || '').substring(0, 2000) } }] },\n        'Draft Reply': { rich_text: [{ text: { content: (aiResponse.cover_letter || '').substring(0, 2000) } }] },\n        'Date Found': { date: { start: new Date().toISOString().split('T')[0] } },\n        'Deadline': { date: { start: new Date().toISOString().split('T')[0] } }\n      },\n      children: [\n        { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '📋 Job Description' } }] } },\n        { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (job.description || 'No description provided.').substring(0, 2000) } }] } },\n        { object: 'block', type: 'divider', divider: {} },\n        { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '✨ Tailored Summary' } }] } },\n        { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (aiResponse.tailored_summary || '').substring(0, 2000) } }] } },\n        { object: 'block', type: 'divider', divider: {} },\n        { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '📝 Cover Letter' } }] } },\n        { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (aiResponse.cover_letter || '').substring(0, 2000) } }] } },\n        { object: 'block', type: 'divider', divider: {} },\n        { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '🎯 Key Talking Points' } }] } },\n        { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: ('• ' + (aiResponse.talking_points ? aiResponse.talking_points.join('\\n• ') : '')).substring(0, 2000) } }] } },\n        { object: 'block', type: 'divider', divider: {} },\n        { object: 'block', type: 'callout', callout: { icon: { emoji: '✅' }, rich_text: [{ type: 'text', text: { content: 'Change status to Approved to auto-send application. A follow-up email will be queued 2 days after.' }, annotations: { bold: true } }] } }\n      ]\n    });\n  })()\n}}",
+        "options": {}
+      },
+      "id": "b076246e-8706-4820-9c6c-3801c6b21c2b",
+      "name": "Save Job to Notion Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        -208
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "fe14430c-902a-4182-b598-caa3dc0cf07a",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -128
+      ],
+      "webhookId": "09876543-abcd-efgh-ijkl-1234567890ab"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        224,
+        -128
+      ],
+      "id": "cc11b67b-928b-4397-ad89-90cd1e64d48a",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\n\nfor (const item of $input.all()) {\n  let cleanData = {};\n  \n  try {\n    // 1. Grab the raw text from Gemini\n    let rawText = item.json.candidates[0].content.parts[0].text;\n    \n    // 2. BEST CASE / NORMAL CASE: Strip out any markdown formatting LLMs love to inject\n    rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();\n    \n    // 3. Convert it from a dumb string into a smart Javascript object\n    cleanData = JSON.parse(rawText);\n    \n  } catch (e) {\n    // 4. WORST CASE: The AI completely failed to return JSON. \n    // We provide a fallback string so the workflow continues and the user knows to check it manually.\n    cleanData = {\n      tailored_summary: \"AI formatting error. Review required.\",\n      cover_letter: \"AI formatting error. Review required.\"\n    };\n  }\n  \n  // Pass the clean data forward\n  results.push({ json: { ...item.json, ai_cleaned: cleanData } });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -208
+      ],
+      "id": "a641bb72-77dd-4b86-b3e4-146204bfde72",
+      "name": "Sanitize AI Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = $input.all();\nconst results = [];\n\nfor (const item of jobs) {\n  const applyLink = item.json.apply_link || '';\n  const jobLink = item.json.job_link || '';\n  const source = (item.json.source || '').toLowerCase();\n\n  // Only block known low-quality aggregators with no direct link\n  const isAggregator =\n    (source.includes('jobzen') || source.includes('snagajob') || source.includes('jooble')) &&\n    !applyLink.includes('linkedin') &&\n    !applyLink.includes('indeed');\n\n  // Accept job if it has ANY link and isn't a bad aggregator\n  const hasAnyLink = applyLink.length > 0 || jobLink.length > 0;\n\n  if (hasAnyLink && !isAggregator) {\n    results.push(item);\n  }\n}\n\nif (results.length === 0) {\n  return [{ json: { no_jobs: true } }];\n}\n\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -128
+      ],
+      "id": "d5b6be56-a8a4-4eda-a43e-0cc50fdf7034",
+      "name": "Stale Job Filter"
+    },
+    {
+      "parameters": {
+        "url": "https://jsearch.p.rapidapi.com/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "num_pages",
+              "value": "3"
+            },
+            {
+              "name": "country",
+              "value": "us"
+            },
+            {
+              "name": "date_posted",
+              "value": "today"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-RapidAPI-Host",
+              "value": "jsearch.p.rapidapi.com"
+            }
+          ]
+        },
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1792,
+        -32
+      ],
+      "id": "7ca817c8-fcc8-485c-9102-7a0de00eac68",
+      "name": "Search JSearch API",
+      "retryOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "RapidAPI JSearch"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1568,
+        -128
+      ],
+      "id": "ca645a94-5fd2-4a85-85b3-7818b738db92",
+      "name": "Merge API Results"
+    }
+  ],
+  "connections": {
+    "Daily 8AM Weekdays": {
+      "main": [
+        [
+          {
+            "node": "Global Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Global Configuration": {
+      "main": [
+        [
+          {
+            "node": "Define Search Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define Search Terms": {
+      "main": [
+        [
+          {
+            "node": "Search Google Jobs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search JSearch API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Google Jobs": {
+      "main": [
+        [
+          {
+            "node": "Merge API Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten & Deduplicate Jobs": {
+      "main": [
+        [
+          {
+            "node": "Has Jobs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Jobs?": {
+      "main": [
+        [
+          {
+            "node": "Get Existing Jobs from Notion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Existing Jobs from Notion": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Pre-Filter by Relevance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pre-Filter by Relevance": {
+      "main": [
+        [
+          {
+            "node": "Stale Job Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Tailor Resume & Cover Letter": {
+      "main": [
+        [
+          {
+            "node": "Sanitize AI Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Job to Notion Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "AI Tailor Resume & Cover Letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize AI Data": {
+      "main": [
+        [
+          {
+            "node": "Save Job to Notion Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stale Job Filter": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search JSearch API": {
+      "main": [
+        [
+          {
+            "node": "Merge API Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge API Results": {
+      "main": [
+        [
+          {
+            "node": "Flatten & Deduplicate Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/Phoenix"
+  }
+}

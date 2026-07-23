@@ -1,0 +1,10 @@
+# raw n8n exports - never commit these, they carry live credentials
+*-raw.json
+raw/
+**/raw-*.json
+
+.env
+.env.*
+!.env.example
+node_modules/
+.DS_Store

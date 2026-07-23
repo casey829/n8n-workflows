@@ -1,0 +1,446 @@
+{
+  "name": "Daily OS - Biometric-Routed Daily Plan",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e59449ce-ab82-4ac9-94dc-fbad29d48b02",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -864,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// DAILY OS — PRODUCTION ROUTER (V2.0)\n\n// 1. ROBUST WHOOP DATA EXTRACTION\nconst whoopNode = $('Fetch Live Whoop Recovery').first();\nconst rawData = whoopNode ? whoopNode.json : {};\n\n/** \n * Logic: If Whoop returns a list (records[]), take the first one. \n * If it returns a single object, use that. \n */\nconst latestRecord = (rawData.records && rawData.records.length > 0) \n    ? rawData.records[0] \n    : rawData;\n\nconst recoveryScore = latestRecord.score?.recovery_score ?? 85;\nconst strainScore = latestRecord.score?.strain ?? 12.4;\n\n// 2. AI PLAN PARSING\nconst aiNode = $('AI Plan the Day').first();\nlet aiPlan = { workoutDifficulty: \"Standard\", morningSpeechType: \"Standard Motivation\", workMusicVibe: \"Standard Instrumental\" };\n\ntry {\n    const rawText = aiNode?.json?.content?.parts?.[0]?.text?.trim() || \"{}\";\n    aiPlan = JSON.parse(rawText);\n} catch (error) {\n    console.log(\"AI parsing failed, using recovery defaults.\");\n}\n\n// 3. PLAYLIST ROUTING - replace with your own playlist IDs\nlet workoutPlaylistUrl = \"https://open.spotify.com/playlist/YOUR_WORKOUT_STANDARD_PLAYLIST\";\nlet workoutLabel = \"💪 Standard\";\n\nif (aiPlan.workoutDifficulty === \"Beast Mode\") {\n    workoutPlaylistUrl = \"https://open.spotify.com/playlist/YOUR_WORKOUT_INTENSE_PLAYLIST\";\n    workoutLabel = \"🔥 Beast Mode\";\n} else if (aiPlan.workoutDifficulty === \"Recovery\") {\n    workoutPlaylistUrl = \"https://open.spotify.com/playlist/YOUR_WORKOUT_RECOVERY_PLAYLIST\";\n    workoutLabel = \"🧘 Recovery\";\n}\n\n// 4. FINAL OUTPUT PAYLOAD\nreturn [{\n    json: {\n        recoveryScore: recoveryScore,\n        strainScore: strainScore,\n        workoutLabel: workoutLabel,\n        workoutPlaylistUrl: workoutPlaylistUrl,\n        \n        // Static URLs (No changes made)\n        wakeUpUrl: \"https://open.spotify.com/playlist/YOUR_WAKEUP_PLAYLIST\",\n        deepWorkUrl: \"https://open.spotify.com/playlist/YOUR_DEEPWORK_PLAYLIST\",\n        journalUrl: \"https://open.spotify.com/playlist/YOUR_JOURNAL_PLAYLIST\",\n        commuteToWorkUrl: \"https://open.spotify.com/playlist/YOUR_COMMUTE_OUT_PLAYLIST\",\n        commuteHomeUrl: \"https://open.spotify.com/playlist/YOUR_COMMUTE_HOME_PLAYLIST\",\n        sleepUrl: \"https://open.spotify.com/playlist/YOUR_JOURNAL_PLAYLIST\",\n        \n        // Keep as URI for the Spotify Node to avoid 404\n        spotifyWakeUpUri: \"spotify:playlist:YOUR_WAKEUP_PLAYLIST\"\n    }\n}];"
+      },
+      "id": "e029f3f0-205e-416d-bec4-7baec6b23f62",
+      "name": "Biometric State & Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.spotify.com/v1/me/player/play",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "spotifyOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"context_uri\": \"{{ $json.spotifyWakeUpUri }}\"\n}\n",
+        "options": {}
+      },
+      "id": "3bd33417-0a2d-4a23-9c12-5e927da59b48",
+      "name": "Play Spotify Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        384,
+        0
+      ],
+      "credentials": {
+        "spotifyOAuth2Api": {
+          "id": "",
+          "name": "Spotify account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.prod.whoop.com/developer/v1/recovery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "adf9916d-3a11-423c-bad1-d7c214042d91",
+      "name": "Fetch Live Whoop Recovery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -640,
+        -96
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "",
+          "name": "Whoop Account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_TASKS_DB_ID",
+          "mode": "list",
+          "cachedResultName": "To-Do’s",
+          "cachedResultUrl": "https://www.notion.so/YOUR_TASKS_DB_ID"
+        },
+        "limit": 1,
+        "filterType": "manual",
+        "filters": {
+          "conditions": [
+            {
+              "key": "To-do|title",
+              "condition": "contains",
+              "titleValue": "Workout & AI Debrief"
+            }
+          ]
+        },
+        "options": {
+          "sort": {
+            "sortValue": [
+              {
+                "key": "Created Time|created_time",
+                "direction": "descending"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -416,
+        -96
+      ],
+      "id": "a8dc231c-84e9-4944-a9b8-1802aca1c019",
+      "name": "Get Yesterday's Debrief",
+      "alwaysOutputData": true,
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a senior performance coach.\n\nYesterday's Workout Rating: {{ $json.properties['Workout Rating'] ? $json.properties['Workout Rating'].number : 5 }}\nToday's Whoop Recovery: {{ $('Fetch Live Whoop Recovery').first().json.score?.recovery_score ?? 'unknown' }}%\n\nBased on this data, design the audio environment for the day. Output ONLY a valid JSON object with the following keys:\n- \"workoutDifficulty\": \"Beast Mode\" (if high recovery/good workout), \"Standard\", or \"Recovery\" (if low recovery).\n- \"morningSpeechType\": \"Intense Hype\" (if high recovery), \"Gentle Encouragement\" (if low recovery), or \"Standard Motivation\".\n- \"workMusicVibe\": \"High BPM Focus\" (if high recovery), \"Lofi/Binaural\" (if low recovery), or \"Standard Instrumental\".\n\nDo not include markdown formatting or the word \"json\" in the output."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -192,
+        -96
+      ],
+      "id": "cb0a97fa-eac9-4b29-956c-91c02aeeeace",
+      "name": "AI Plan the Day",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_TASKS_DB_ID",
+          "mode": "list",
+          "cachedResultName": "To-Do’s",
+          "cachedResultUrl": "https://www.notion.so/YOUR_TASKS_DB_ID"
+        },
+        "title": "=📅 Daily OS — {{ $now.format('MMMM d, yyyy') }}\n",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Deadline|date",
+              "date": "={{ $now.format('yyyy-MM-dd') }}",
+              "timezone": "America/Phoenix"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "heading_2",
+              "textContent": "📊 Today's Biometrics"
+            },
+            {
+              "textContent": "=Recovery Score: {{ $json.recoveryScore }}%   |   Strain: {{ $json.strainScore }}   |   AI Recommendation: {{ $json.workoutLabel }}\n"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "🏋️ 5:05 AM — Workout"
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=▶ Play {{ $json.workoutLabel }} Playlist",
+                    "isLink": true,
+                    "textLink": "={{ $json.workoutPlaylistUrl }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "📺 30-Min Dumbbell Workout",
+                    "isLink": true,
+                    "textLink": "https://www.youtube.com/watch?v=XxuRSjER3Qk",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "textContent": "📝 5:35 AM — Morning Journal & Debrief"
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "▶ Play Journal Music",
+                    "isLink": true,
+                    "textLink": "={{ $json.journalUrl }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "type": "to_do",
+              "textContent": "How was your energy during the workout?"
+            },
+            {
+              "type": "to_do",
+              "textContent": "Did you complete the full 30-min dumbbell circuit?"
+            },
+            {
+              "type": "to_do",
+              "textContent": "How are you feeling going into the workday?"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "🚗 6:00 AM — Commute to Work"
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "▶ Play Motivational Speeches",
+                    "isLink": true,
+                    "textLink": "={{ $json.commuteToWorkUrl }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "textContent": "💼 7:00 AM — Deep Work"
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "▶ Play Country Focus Music",
+                    "isLink": true,
+                    "textLink": "={{ $json.deepWorkUrl }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "textContent": "🚗 4:30 PM — Commute Home"
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "▶ Play Consider This NPR / TED Talks",
+                    "isLink": true,
+                    "textLink": "={{ $json.commuteHomeUrl }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "textContent": "🌙 10:00 PM — Wind Down"
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "▶ Play Sleep & Meditation Music",
+                    "isLink": true,
+                    "textLink": "={{ $json.sleepUrl }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        384,
+        -192
+      ],
+      "id": "33da7fc8-c625-42d3-ae8a-cac15877b2bb",
+      "name": "Create Daily OS page",
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "Fetch Live Whoop Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Biometric State & Router": {
+      "main": [
+        [
+          {
+            "node": "Play Spotify Audio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Create Daily OS page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Play Spotify Audio": {
+      "main": [
+        []
+      ]
+    },
+    "Get Yesterday's Debrief": {
+      "main": [
+        [
+          {
+            "node": "AI Plan the Day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Plan the Day": {
+      "main": [
+        [
+          {
+            "node": "Biometric State & Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Live Whoop Recovery": {
+      "main": [
+        [
+          {
+            "node": "Get Yesterday's Debrief",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Yesterday's Debrief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/Phoenix",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

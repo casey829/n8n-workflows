@@ -1,0 +1,357 @@
+{
+  "name": "Tax Lien Hub - Notion Ingestion",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "92cab8e7-048c-4615-8f5d-604d3bbe0f9e",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// STANDARDIZE & CLEAN PAYLOAD\n// ============================================================\n// Enforces strict schema, cleans addresses, maps status,\n// generates unique_id for deduplication.\n// ============================================================\n\nreturn items.map(item => {\n  const d = item.json;\n\n  // --- Clean Property Address ---\n  let address = d.property_address || 'N/A';\n  const isWithdrawn = /\\*{3}Withdrawn\\*{3}/i.test(address);\n  address = address.replace(/\\*{3}Withdrawn\\*{3}/gi, '').trim();\n  // Strip leading county prefix: \"Clark County, WA: APN: 97978298\" → \"APN: 97978298\"\n  const countyPrefixMatch = address.match(/^[^:]+County,?\\s*[A-Z]{2}\\s*:\\s*(.+)$/i);\n  if (countyPrefixMatch) {\n    address = countyPrefixMatch[1].trim();\n  }\n\n  // --- Map Status ---\n  let status = 'Active';\n  const rawStatus = (d.status || '').toLowerCase();\n  const rawRemaining = (d.time_remaining || '').toLowerCase();\n  \n  if (isWithdrawn || rawStatus === 'withdrawn') {\n    status = 'Withdrawn';\n  } else if (rawRemaining === 'sold' || rawStatus === 'sold') {\n    status = 'Sold';\n  } else if (rawRemaining === 'closed' || rawStatus === 'closed') {\n    status = 'Closed';\n  } else if (rawStatus === 'upcoming' || rawStatus === 'preview') {\n    status = 'Upcoming';\n  } else {\n    status = 'Active';\n  }\n\n  // --- Source ---\n  const source = d.source || 'Unknown';\n\n  // --- County & State ---\n  const county = d.county || 'N/A';\n  const state = d.state || '';\n\n  // --- Generate unique ID for deduplication ---\n  const uniqueId = `${source}|${county}|${address}`.toLowerCase().replace(/\\s+/g, '');\n\n  // --- Current Bid ---\n  let bid = 0;\n  if (typeof d.current_bid === 'number') {\n    bid = d.current_bid;\n  } else if (d.current_bid) {\n    bid = parseFloat(String(d.current_bid).replace(/[^\\d.]/g, '')) || 0;\n  }\n\n  // --- Auction URL ---\n  const auctionUrl = d.auction_url || '';\n\n  return {\n    json: {\n      property_address: address,\n      county: county,\n      state: state,\n      source: source,\n      status: status,\n      current_bid: bid,\n      bidding_date: d.bidding_date || '',\n      bidding_time: d.bidding_time || '',\n      sale_date: d.sale_date || '',\n      auction_url: auctionUrl,\n      unique_id: uniqueId\n    }\n  };\n});"
+      },
+      "id": "fd6306cd-b6d2-4bd2-8e59-a698c99b5d84",
+      "name": "Standardize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -784,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/YOUR_TAX_LIEN_DB_ID/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filter\": {\n    \"property\": \"Unique ID\",\n    \"rich_text\": {\n      \"is_not_empty\": true\n    }\n  },\n  \"page_size\": 100\n}",
+        "options": {
+          "timeout": 60000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "body",
+                    "name": "start_cursor",
+                    "value": "={{ $response.body.next_cursor }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.has_more === false }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50
+            }
+          }
+        }
+      },
+      "id": "edee853a-a310-48e5-b48a-f1bb1ffad2f1",
+      "name": "Fetch Existing Entries",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -560,
+        64
+      ],
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "executeOnce": true,
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// DEDUPLICATION + ROUTE: New vs Update vs Skip\n// ============================================================\n\n// Build map of existing entries from Notion\n// Pagination returns one item per page - flatten every page or the\n// dedup map silently only covers the first 100 rows.\nconst pages = $('Fetch Existing Entries').all();\nconst existingResults = pages.flatMap(p => p.json.results || []);\nconst existingMap = new Map();\n\nfor (const page of existingResults) {\n  const props = page.properties || {};\n  let uniqueId = '';\n  \n  if (props['Unique ID']?.rich_text?.[0]?.plain_text) {\n    uniqueId = props['Unique ID'].rich_text[0].plain_text;\n  }\n  \n  if (uniqueId) {\n    existingMap.set(uniqueId, {\n      pageId: page.id,\n      currentBid: props['Current Bid']?.number || 0,\n      status: props['Status']?.select?.name || ''\n    });\n  }\n}\n\n// Process incoming items\nconst incomingItems = $('Standardize Payload').all();\nconst newItems = [];\nconst updateItems = [];\nlet skipped = 0;\n\nfor (const item of incomingItems) {\n  const uid = item.json.unique_id;\n  const existing = existingMap.get(uid);\n  \n  if (!existing) {\n    // New entry → create\n    newItems.push(item);\n  } else if (\n    existing.currentBid !== item.json.current_bid ||\n    existing.status !== item.json.status\n  ) {\n    // Bid or status changed → update\n    updateItems.push({\n      json: {\n        ...item.json,\n        notion_page_id: existing.pageId\n      }\n    });\n  } else {\n    skipped++;\n  }\n}\n\nconsole.log(`📊 Dedup: ${existingResults.length} existing across ${pages.length} page(s), ${incomingItems.length} incoming, ${newItems.length} new, ${updateItems.length} updates, ${skipped} skipped`);\n\n// Output 1: new items, Output 2: updates\nreturn [\n  newItems.length > 0 ? newItems : [{ json: { _skip: true } }],\n  updateItems.length > 0 ? updateItems : [{ json: { _skip: true } }]\n];"
+      },
+      "id": "0fcfb937-1eec-4169-8f27-76f3e3fc6c5f",
+      "name": "Deduplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "not_skip",
+              "leftValue": "={{ $json._skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "040716e5-fd52-4c09-9201-2031bd2f49a8",
+      "name": "Has New Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "not_skip_update",
+              "leftValue": "={{ $json._skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "63da4fa8-9a43-4d56-90fd-f0449e162b99",
+      "name": "Has Updates?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_TAX_LIEN_DB_ID",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Property Address|title",
+              "title": "={{ $json.property_address }}"
+            },
+            {
+              "key": "County|rich_text",
+              "textContent": "={{ $json.county }}"
+            },
+            {
+              "key": "State|rich_text",
+              "textContent": "={{ $json.state }}"
+            },
+            {
+              "key": "Source|select",
+              "selectValue": "={{ $json.source }}"
+            },
+            {
+              "key": "Status|select",
+              "selectValue": "={{ $json.status }}"
+            },
+            {
+              "key": "Current Bid|number",
+              "numberValue": "={{ $json.current_bid }}"
+            },
+            {
+              "key": "Bidding Date|rich_text",
+              "textContent": "={{ $json.bidding_date }}"
+            },
+            {
+              "key": "Bidding Time|rich_text",
+              "textContent": "={{ $json.bidding_time }}"
+            },
+            {
+              "key": "Sale Date|rich_text",
+              "textContent": "={{ $json.sale_date }}"
+            },
+            {
+              "key": "Auction URL|url",
+              "urlValue": "={{ $json.auction_url }}"
+            },
+            {
+              "key": "Unique ID|rich_text",
+              "textContent": "={{ $json.unique_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "124e4105-d1a6-43d1-bfc5-41c882cc7fd0",
+      "name": "Create in Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [
+        112,
+        -32
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": "={{ $json.notion_page_id }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|select",
+              "selectValue": "={{ $json.status }}"
+            },
+            {
+              "key": "Current Bid|number",
+              "numberValue": "={{ $json.current_bid }}"
+            },
+            {
+              "key": "Bidding Time|rich_text",
+              "textContent": "={{ $json.bidding_time }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ff7f03ef-277e-4b9c-b785-2b0ae69d74d5",
+      "name": "Update in Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [
+        112,
+        160
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Standardize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Standardize Payload": {
+      "main": [
+        [
+          {
+            "node": "Fetch Existing Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Existing Entries": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate": {
+      "main": [
+        [
+          {
+            "node": "Has New Items?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Updates?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has New Items?": {
+      "main": [
+        [
+          {
+            "node": "Create in Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Updates?": {
+      "main": [
+        [
+          {
+            "node": "Update in Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  }
+}

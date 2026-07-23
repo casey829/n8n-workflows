@@ -1,0 +1,143 @@
+{
+  "name": "05 Extractor: Pinal County ArcGIS",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "3a3e90cf-fc4b-43e7-9d61-20db34ebcbb7",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -224,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://gis.pinal.gov/mapping/rest/services/DelinquentTaxes/MapServer/0/query",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "1=1"
+            },
+            {
+              "name": "outFields",
+              "value": "*"
+            },
+            {
+              "name": "returnGeometry",
+              "value": "false"
+            },
+            {
+              "name": "f",
+              "value": "json"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Referer",
+              "value": "https://experience.arcgis.com/"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fa1ff52b-ad98-4aeb-bf07-224ed685c2ab",
+      "name": "Fetch ArcGIS Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        0,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// PARSE ARCGIS FEATURES TO NOTION HUB SCHEMA (DEEP LINK FIX)\n// ============================================================\nconst rawData = $input.first().json;\n\nif (!rawData || !rawData.features || rawData.features.length === 0) {\n  return [{ json: { error: \"No features found. Server might be down or query failed.\", source: \"Pinal ArcGIS\", unique_id: \"skip\" } }];\n}\n\nconst features = rawData.features;\nconst results = [];\n\nfor (const feature of features) {\n  const attr = feature.attributes || {};\n\n  const getVal = (keywords) => {\n    const key = Object.keys(attr).find(k => keywords.some(kw => k.toLowerCase().includes(kw)));\n    return key ? attr[key] : null;\n  };\n\n  const parcelNumber = getVal(['parcel', 'apn', 'pin', 'taxcode']) || \"Unknown\";\n  let address = getVal(['address', 'situs', 'location']) || \"\";\n  const owner = getVal(['owner', 'name']) || \"Unknown Owner\";\n\n  let displayParcel = parcelNumber;\n  if (displayParcel && displayParcel.length === 9) {\n    displayParcel = displayParcel.replace(/^(.{3})(.{2})(.{3})(.{1})$/, \"$1-$2-$3-$4\");\n  }\n\n  if (!address || address.toString().trim().toLowerCase() === 'not available') {\n    address = `Parcel: ${displayParcel}`;\n  }\n\n  address = `${address} | Owner: ${owner}`;\n\n  let bidAmount = getVal(['amount', 'due', 'tax', 'face', 'total', 'purchasetotal']) || 0;\n  if (typeof bidAmount === 'string') {\n      bidAmount = parseFloat(bidAmount.replace(/[^\\d.]/g, '')) || 0;\n  }\n\n  const county = \"Pinal County\";\n  const state = \"AZ\";\n  \n  // --- THE SENIOR FIX: DIRECT ASSESSOR DEEP LINK ---\n  let cleanParcel = parcelNumber.replace(/[^a-zA-Z0-9]/g, '');\n  const auctionUrl = cleanParcel !== \"Unknown\" \n    ? `https://app1.pinal.gov/Search/Parcel-Details.aspx?Parcel_ID=${cleanParcel}` \n    : \"https://experience.arcgis.com/experience/ad75946c98f44dc58ccc635553947a27/\";\n\n  const uniqueId = `arcgis|${county}|${parcelNumber}`.toLowerCase().replace(/[^a-z0-9|]/g, '');\n\n  results.push({\n    json: {\n      property_address: address,\n      county: county,\n      state: state,\n      source: \"RealTaxLien - Pinal AZ\",\n      status: \"Upcoming\",\n      sale_date: \"Check Listing\",\n      bidding_date: \"Check Listing\",\n      bidding_time: \"Check Listing\",\n      current_bid: bidAmount,\n      auction_url: auctionUrl,\n      time_remaining: \"\",\n      unique_id: uniqueId\n    }\n  });\n}\n\nconst LIMITED = results.slice(0, 10);\nconsole.log(`✅ ArcGIS: ${LIMITED.length} properties passed (capped at 10)`);\nreturn LIMITED;\n"
+      },
+      "id": "fbc700b1-aa4d-44fe-857c-6a538d9c8482",
+      "name": "Parse ArcGIS Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "YOUR_HUB_WORKFLOW_ID",
+        "options": {}
+      },
+      "id": "23da2190-9b94-4f7f-91ce-de1731f72990",
+      "name": "Send to Hub",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        448,
+        16
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch ArcGIS Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch ArcGIS Data": {
+      "main": [
+        [
+          {
+            "node": "Parse ArcGIS Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse ArcGIS Data": {
+      "main": [
+        [
+          {
+            "node": "Send to Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/Phoenix"
+  }
+}
