@@ -1,9 +1,9 @@
 # n8n Workflows
 
-Twelve n8n workflows across six projects, built for a single Upwork client 
-a personal automation suite plus a tax lien aggregation pipeline  and
+Twelve n8n workflows across six projects, built for a single Upwork client —
+a personal automation suite plus a tax lien aggregation pipeline — and
 published with their permission. Every workflow here ran against live systems
- credentials and client-identifying data have been replaced with
+— credentials and client-identifying data have been replaced with
 placeholders, and all authentication routes through n8n's credential store
 rather than the workflow file.
 
@@ -43,7 +43,7 @@ write path.
 ## Using these
 
 Each folder has its own README with setup steps, required credentials and the
-placeholder values to replace. All workflows import inactive  fill in
+placeholder values to replace. All workflows import inactive — fill in
 configuration and credentials before activating.
 
 Workflows are exported from n8n and import via **Workflows → Import from File**.
@@ -54,9 +54,10 @@ credential on each node after importing.
 
 Delivered. All twelve workflows were built on an Upwork engagement and are
 published with the client's permission, sanitized for public release. There is
-nothing to deploy or visit  these are workflow exports, and the import steps
+nothing to deploy or visit — these are workflow exports, and the import steps
 are above.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+All rights reserved — see [LICENSE](LICENSE). Published as a portfolio sample
+with the client's permission; not licensed for reuse.
